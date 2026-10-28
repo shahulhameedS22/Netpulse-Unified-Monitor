@@ -11,7 +11,7 @@
 import express, { type Request, type Response, type NextFunction, type Application } from 'express';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { dispatchSpeedTestRoute } from './speedTestApi';
+import { dispatchSpeedTestRoute } from './speedTestApi.ts';
 
 dotenv.config();
 
