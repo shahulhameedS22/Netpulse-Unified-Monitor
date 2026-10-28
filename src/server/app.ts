@@ -819,10 +819,26 @@ export function createApiApp(): Application {
   agentRouter.post('/ingest', healthRateLimiter, agentIngest);
   app.use('/api/agent', agentRouter);
   app.use('/agent', agentRouter);
+  apiRouter.use('/agent', agentRouter);
 
   // Mount API router exclusively under /api prefix
   // This allows the root '/' and client-side routes to be served by Vite middleware (or static dist in production)
   app.use('/api', apiRouter);
+
+  // Also handle requests on Vercel Serverless Functions where /api prefix may be stripped
+  app.use((req, res, next) => {
+    if (
+      req.path.startsWith('/regions') ||
+      req.path.startsWith('/speedtest') ||
+      req.path.startsWith('/auth') ||
+      req.path.startsWith('/health') ||
+      req.path.startsWith('/agent') ||
+      req.path.startsWith('/alerts')
+    ) {
+      return apiRouter(req, res, next);
+    }
+    next();
+  });
 
   return app;
 }
