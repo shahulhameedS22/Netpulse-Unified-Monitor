@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Authorized operator and administrator user profile document",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The unique Firebase Auth UID of the user"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "The full name of the operator"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The work email address of the operator"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["operator", "admin"],
+          "description": "The access role of the user"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of user registration"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of profile update"
+        }
+      },
+      "required": ["userId", "fullName", "email"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile records restricted to owner and authenticated operators"
+    }
+  }
+}

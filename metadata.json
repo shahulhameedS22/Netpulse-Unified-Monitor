@@ -1,0 +1,6 @@
+{
+  "name": "Network Speed & Ping Monitor",
+  "description": "Unified network speed test and multi-region ping monitoring across regional data centers in India, Sri Lanka, and Singapore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

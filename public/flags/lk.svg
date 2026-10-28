@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" width="100%" height="100%">
+  <!-- Gold outer border of Sri Lanka flag -->
+  <rect width="1200" height="600" fill="#FFBE29" />
+  
+  <!-- Left stripes: Teal-green and Orange framed in gold -->
+  <!-- Teal Green Stripe -->
+  <rect x="70" y="55" width="100" height="490" fill="#00534E" />
+  <!-- Orange Stripe -->
+  <rect x="195" y="55" width="100" height="490" fill="#EB7400" />
+  
+  <!-- Right Maroon/Crimson Field -->
+  <rect x="345" y="55" width="785" height="490" fill="#881237" />
+  
+  <!-- Four Golden Bo (Pipala) Leaves in corners of maroon field -->
+  <!-- Top-Left Leaf (Pointing SE) -->
+  <path d="M 370 75 C 385 105 405 130 440 145 C 410 140 380 125 365 100 C 360 85 365 75 370 75 Z" fill="#FFBE29" />
+  <path d="M 368 75 Q 405 110 440 145" stroke="#881237" stroke-width="2" fill="none" />
+
+  <!-- Bottom-Left Leaf (Pointing NE) -->
+  <path d="M 370 525 C 385 495 405 470 440 455 C 410 460 380 475 365 500 C 360 515 365 525 370 525 Z" fill="#FFBE29" />
+  <path d="M 368 525 Q 405 490 440 455" stroke="#881237" stroke-width="2" fill="none" />
+
+  <!-- Top-Right Leaf (Pointing SW) -->
+  <path d="M 1105 75 C 1090 105 1070 130 1035 145 C 1065 140 1095 125 1110 100 C 1115 85 1110 75 1105 75 Z" fill="#FFBE29" />
+  <path d="M 1107 75 Q 1070 110 1035 145" stroke="#881237" stroke-width="2" fill="none" />
+
+  <!-- Bottom-Right Leaf (Pointing NW) -->
+  <path d="M 1105 525 C 1090 495 1070 470 1035 455 C 1065 460 1095 475 1110 500 C 1115 515 1110 525 1105 525 Z" fill="#FFBE29" />
+  <path d="M 1107 525 Q 1070 490 1035 455" stroke="#881237" stroke-width="2" fill="none" />
+
+  <!-- The Golden Sinhalese Lion (Simha) with sword -->
+  <g fill="#FFBE29" stroke="#FFBE29" stroke-linejoin="round">
+    <!-- Kastane Sword held upright in right forepaw -->
+    <!-- Blade -->
+    <path d="M 605 160 L 612 145 L 619 160 L 616 280 L 608 280 Z" fill="#FFBE29" stroke="#881237" stroke-width="1.5" />
+    <!-- Sword Crossguard & Hilt -->
+    <path d="M 595 278 L 629 278 L 625 285 L 599 285 Z" fill="#FFBE29" stroke="#881237" stroke-width="1" />
+    <circle cx="612" cy="295" r="5" fill="#FFBE29" stroke="#881237" stroke-width="1" />
+    <path d="M 609 285 L 615 285 L 614 292 L 610 292 Z" fill="#FFBE29" />
+
+    <!-- Foreleg holding the sword -->
+    <path d="M 610 285 C 600 290 580 295 565 310 C 555 320 545 340 545 365 C 555 360 565 350 575 340 C 585 330 600 315 615 300 Z" stroke="#881237" stroke-width="2" />
+
+    <!-- Lion Head, Mane & Jaws -->
+    <!-- Head & Crown -->
+    <path d="M 650 205 C 640 185 660 165 680 175 C 695 185 700 200 695 215 C 710 215 725 220 735 235 C 745 250 740 270 725 280 C 735 290 735 305 725 315 C 715 325 700 325 685 320 C 680 345 665 365 645 380 C 625 395 600 400 575 395 C 560 380 550 360 550 340 C 550 320 565 295 585 280 C 600 268 610 250 615 230 C 620 215 635 205 650 205 Z" stroke="#881237" stroke-width="2.5" />
+
+    <!-- Snout and Open Mouth with Tongue -->
+    <path d="M 615 235 C 595 230 585 240 575 250 C 565 260 560 275 570 280 C 585 285 595 275 605 270 Z" stroke="#881237" stroke-width="2" />
+    <!-- Lion Eye -->
+    <circle cx="630" cy="235" r="4" fill="#881237" />
+    <circle cx="631" cy="234" r="1.5" fill="#FFBE29" />
+
+    <!-- Lion Body (Torso and Flanks) -->
+    <path d="M 680 300 C 720 295 780 300 830 330 C 860 350 880 380 885 415 C 875 435 850 445 820 440 C 780 435 750 415 715 410 C 675 405 640 420 615 435 C 600 415 605 385 620 365 C 640 340 660 320 680 300 Z" stroke="#881237" stroke-width="3" />
+
+    <!-- Mane curls and decorative flame tufts -->
+    <path d="M 650 240 C 665 260 670 280 660 305" stroke="#881237" stroke-width="3" fill="none" />
+    <path d="M 675 235 C 690 260 690 285 680 310" stroke="#881237" stroke-width="3" fill="none" />
+    <path d="M 700 250 C 715 275 710 300 695 320" stroke="#881237" stroke-width="3" fill="none" />
+
+    <!-- Arched Lion Tail with flame-like tuft curving forward over back -->
+    <path d="M 875 415 C 915 390 945 340 935 280 C 925 230 885 195 835 195 C 795 195 765 220 760 250 C 760 265 770 275 785 270 C 795 265 805 250 815 240 C 835 225 865 230 880 255 C 895 280 890 320 865 355 C 850 375 830 395 810 405" stroke="#FFBE29" stroke-width="14" fill="none" stroke-linecap="round" />
+    <path d="M 875 415 C 915 390 945 340 935 280 C 925 230 885 195 835 195 C 795 195 765 220 760 250 C 760 265 770 275 785 270 C 795 265 805 250 815 240 C 835 225 865 230 880 255 C 895 280 890 320 865 355 C 850 375 830 395 810 405" stroke="#881237" stroke-width="2.5" fill="none" />
+    <!-- Tail Tuft (Flame-shaped end) -->
+    <path d="M 760 240 C 740 220 745 190 770 185 C 785 180 800 195 795 210 C 810 200 825 210 820 225 C 805 245 785 255 760 240 Z" stroke="#881237" stroke-width="2" />
+
+    <!-- Four Paws / Legs Standing Firm -->
+    <!-- Left Forepaw -->
+    <path d="M 630 420 L 615 490 L 590 495 C 585 495 580 485 585 480 L 610 420 Z" stroke="#881237" stroke-width="2" />
+    <!-- Claws Left Forepaw -->
+    <circle cx="585" cy="492" r="4" fill="#881237" />
+    <circle cx="595" cy="494" r="4" fill="#881237" />
+
+    <!-- Left Hind Leg & Paw -->
+    <path d="M 780 435 L 775 495 L 755 500 C 748 500 745 490 750 485 L 765 435 Z" stroke="#881237" stroke-width="2" />
+    <circle cx="752" cy="497" r="4" fill="#881237" />
+    <circle cx="762" cy="498" r="4" fill="#881237" />
+
+    <!-- Right Hind Leg & Paw -->
+    <path d="M 855 425 L 865 490 L 885 495 C 892 495 895 485 890 480 L 870 425 Z" stroke="#881237" stroke-width="2" />
+    <circle cx="885" cy="493" r="4" fill="#881237" />
+    <circle cx="875" cy="493" r="4" fill="#881237" />
+  </g>
+</svg>

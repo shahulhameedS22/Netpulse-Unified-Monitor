@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" width="100%" height="100%">
+  <!-- Top Red Half -->
+  <rect width="900" height="300" fill="#ED2939" />
+  <!-- Bottom White Half -->
+  <rect y="300" width="900" height="300" fill="#FFFFFF" />
+  
+  <!-- Canton: Crescent and 5 Stars -->
+  <g fill="#FFFFFF">
+    <!-- Crescent Moon -->
+    <path d="M 195 65 A 85 85 0 1 0 195 235 A 72 72 0 1 1 195 65 Z" />
+    
+    <!-- 5 Five-Pointed Stars in a Circle centered around (240, 150) -->
+    <!-- Star 1 (Top Center: 90 deg / -90 from horiz) -->
+    <polygon points="240,95 244,107 257,107 246,115 250,127 240,120 230,127 234,115 223,107 236,107" />
+    <!-- Star 2 (Top Right: ~18 deg) -->
+    <polygon points="274,120 278,132 291,132 280,140 284,152 274,145 264,152 268,140 257,132 270,132" />
+    <!-- Star 3 (Bottom Right: ~306 deg) -->
+    <polygon points="261,162 265,174 278,174 267,182 271,194 261,187 251,194 255,182 244,174 257,174" />
+    <!-- Star 4 (Bottom Left: ~234 deg) -->
+    <polygon points="219,162 223,174 236,174 225,182 229,194 219,187 209,194 213,182 202,174 215,174" />
+    <!-- Star 5 (Top Left: ~162 deg) -->
+    <polygon points="206,120 210,132 223,132 212,140 216,152 206,145 196,152 200,140 189,132 202,132" />
+  </g>
+</svg>
