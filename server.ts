@@ -4,7 +4,7 @@
  * Supports:
  * 1. Local Development (`npm run dev`): Express API + Vite middleware on Port 3000
  * 2. Production Container / Cloud Run (`npm start`): Express API + Static build serving from dist/
- * 3. Vercel Serverless: via api/index.ts (compiled to api/index.js)
+ * 3. Vercel Serverless: via api/index.ts
  */
 
 import express, { type Request, type Response } from 'express';
