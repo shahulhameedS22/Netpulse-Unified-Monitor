@@ -304,7 +304,10 @@ const PK = {
 };
 
 export function isPushRegion(regionId: string): regionId is RegionId {
-  return (ALLOWED_REGIONS as readonly string[]).includes(regionId) && Boolean(process.env[agentKeyEnvName(regionId as RegionId)]?.trim());
+  if (!(ALLOWED_REGIONS as readonly string[]).includes(regionId)) return false;
+  const specific = process.env[agentKeyEnvName(regionId as RegionId)]?.trim();
+  const fallback = process.env.AGENT_KEY?.trim();
+  return Boolean(specific || fallback);
 }
 
 function digestEqual(a: string, b: string): boolean {
@@ -320,7 +323,7 @@ function authAgent(req: Request): RegionId | null {
   if (!token) return null;
   let found: RegionId | null = null;
   for (const r of ALLOWED_REGIONS) {
-    const key = process.env[agentKeyEnvName(r)]?.trim();
+    const key = process.env[agentKeyEnvName(r)]?.trim() || process.env.AGENT_KEY?.trim();
     if (key && digestEqual(token, key)) found = r;
   }
   return found;
@@ -703,10 +706,23 @@ export function createApiApp(): Application {
 
     // 2. Local push mode if Redis configured
     if (isPushRegion(regionId)) {
+      if (!redisConfig()) {
+        res.status(503).json({
+          success: false,
+          regionId,
+          error: 'Push agent queue storage is not configured: In Vercel, go to Storage > Create Database > Upstash Redis to connect KV storage.',
+        });
+        return;
+      }
+
       try {
         const [seen, pending, cool] = await redisPipeline([['GET', PK.seen(regionId)], ['GET', PK.req(regionId)], ['EXISTS', PK.cool(regionId)]]);
         if (!seen || Date.now() - Number(seen) > AGENT_STALE_MS) {
-          res.status(503).json({ success: false, regionId, error: `Regional agent for ${regionId} is offline: no heartbeat in the last 10 minutes.` });
+          res.status(503).json({
+            success: false,
+            regionId,
+            error: `Regional push agent for ${regionId} is offline: no heartbeat in the last 10 minutes. Ensure push-agent.cjs is running on the VM with AGENT_URL pointing to this app.`,
+          });
           return;
         }
         if (pending) {
@@ -724,7 +740,12 @@ export function createApiApp(): Application {
         res.status(202).json({ status: 'queued', requestId, regionId, pollAfterMs: 3000 });
         return;
       } catch (err: any) {
-        // Fall through to upstream if storage is not locally configured
+        res.status(500).json({
+          success: false,
+          regionId,
+          error: `Storage error: ${err.message || 'Unable to access Redis queue'}`,
+        });
+        return;
       }
     }
 
@@ -742,7 +763,7 @@ export function createApiApp(): Application {
           timeoutMs: req.body?.timeoutMs,
           sessionId: req.body?.sessionId,
         }),
-        signal: AbortSignal.timeout(35000),
+        signal: AbortSignal.timeout(12000), // Bound within Vercel's 15s function execution limit
       });
 
       const data = await upstreamRes.json().catch(() => ({}));

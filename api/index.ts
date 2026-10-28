@@ -4,8 +4,12 @@
  * Authoritative entrypoint for Vercel deployment.
  * Routes all /api/* requests to the unified Network Monitoring Express application.
  */
-import { createApiApp } from '../src/server/app';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createApiApp } from '../src/server/app.ts';
 
 const app = createApiApp();
 
-export default app;
+export default function handler(req: IncomingMessage, res: ServerResponse) {
+  return (app as any)(req, res);
+}
+
