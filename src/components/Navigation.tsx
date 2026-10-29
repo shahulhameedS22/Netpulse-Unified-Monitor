@@ -56,7 +56,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       id: 'endpoints' as NavTab,
       label: 'Regional Nodes',
       icon: Server,
-      badge: '4 DCs',
+      badge: '',
       badgeColor: 'bg-slate-800 text-slate-400 border-slate-700',
     },
   ];
