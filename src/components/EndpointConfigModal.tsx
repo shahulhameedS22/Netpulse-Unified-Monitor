@@ -54,27 +54,20 @@ export const EndpointConfigModal: React.FC<EndpointConfigModalProps> = ({
           {/* List of 4 endpoints and their configured URLs */}
           <div className="space-y-3">
             <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-              Configured Endpoints (4 Regional Nodes)
+              Configured Endpoints
             </span>
             <div className="space-y-2.5">
               {TEST_ENDPOINTS.map((ep) => (
                 <div
                   key={ep.id}
-                  className={`p-3.5 rounded-xl border text-xs transition-all ${
-                    ep.id === selectedEndpoint.id
-                      ? 'bg-[#182645] border-cyan-400/60 shadow-lg shadow-cyan-900/20'
-                      : 'bg-[#0c1424] border-slate-700/80'
-                  }`}
+                  className="p-3.5 rounded-xl border border-slate-700/80 bg-[#0c1424] hover:border-slate-600 text-xs transition-all shadow-sm"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <Server className={`w-3.5 h-3.5 ${ep.id === selectedEndpoint.id ? 'text-cyan-400' : 'text-slate-400'}`} />
+                      <Server className="w-3.5 h-3.5 text-cyan-400" />
                       <span className="font-bold text-white">{ep.name}</span>
                       <span className="text-cyan-300 font-mono font-bold">({ep.serverCode})</span>
                     </div>
-                    <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-slate-800 border border-slate-700 font-bold text-slate-200">
-                      {ep.countryCode} Node
-                    </span>
                   </div>
 
                   <div className="space-y-1 font-mono text-[11px]">
