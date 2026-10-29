@@ -106,16 +106,7 @@ export const UnifiedDashboardPage: React.FC<UnifiedDashboardPageProps> = ({
             </p>
              </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={checkHealth}
-              disabled={refreshing}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-600 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${refreshing ? 'animate-spin' : ''}`} />
-              <span>Probe Node Health</span>
-            </button>
-          </div>
+         
         </div>
          
       </div>
