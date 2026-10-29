@@ -237,8 +237,8 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
             Sequential real-time speed measurement across all four dedicated data center servers:<br></br>
             <strong className="text-cyan-300"> IN-DC01 (TATA Node)</strong> →{' '}
             <strong className="text-blue-300">IN-DC02 (ACT Node)</strong> →{' '}
-            <strong className="text-emerald-300">LK-DC01 (Sri Lanka Node)</strong> →{' '}
-            <strong className="text-indigo-300">SG-DC01 (Singapore Hub)</strong>.
+            <strong className="text-emerald-300">LK-DC01 (SLT Mobitel)</strong> →{' '}
+            <strong className="text-indigo-300">SG-DC01 (Singtel)</strong>.
           </p>
         </div>
 
