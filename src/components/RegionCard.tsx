@@ -101,10 +101,10 @@ export const RegionCard: React.FC<RegionCardProps> = ({
   const badgeConfig = getCountryBadgeStyle(meta.countryCode, result.regionId);
 
   const REGIONAL_DC_NAMES: Record<string, string> = {
-    'IN-DC01': 'TATA data center',
-    'IN-DC02': 'ACT data center',
-    'LK-DC01': 'Srilanka data center',
-    'SG-DC01': 'Singapore data center',
+    'IN-DC01': 'Bangalore (TATA)',
+    'IN-DC02': 'Bangalore (ACT)',
+    'LK-DC01': 'Sri Lanka',
+    'SG-DC01': 'Singapore',
   };
 
   const deliveryPercent =
