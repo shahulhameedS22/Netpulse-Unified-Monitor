@@ -4,7 +4,6 @@ import { speedTestEngine } from '../services/speedTestEngine';
 import { LiveMetrics, SpeedTestResult, TestStage, RegionState } from '../types/speed';
 import { SpeedGauge } from '../components/SpeedGauge';
 import { RegionResultSection } from '../components/RegionResultSection';
-import { EndpointConfigModal } from '../components/EndpointConfigModal';
 import {
   Play,
   Square,
@@ -240,17 +239,6 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
             <strong className="text-emerald-300">LK-DC01 (SLT Mobitel)</strong> →{' '}
             <strong className="text-indigo-300">SG-DC01 (Singtel)</strong>.
           </p>
-        </div>
-
-        <div className="flex items-center gap-2 self-start md:self-auto">
-          <button
-            onClick={() => setIsConfigModalOpen(true)}
-            type="button"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-600 transition-colors cursor-pointer"
-          >
-            <SlidersHorizontal className="w-4 h-4 text-cyan-400" />
-            <span>Endpoints Config</span>
-          </button>
         </div>
       </div>
 
@@ -556,13 +544,6 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
           ))}
         </div>
       </section>
-
-      {/* Diagnostics Modal */}
-      <EndpointConfigModal
-        isOpen={isConfigModalOpen}
-        onClose={() => setIsConfigModalOpen(false)}
-        selectedEndpoint={activeRegion?.endpoint || UNIFIED_ENDPOINTS[0]}
-      />
     </div>
   );
 };
