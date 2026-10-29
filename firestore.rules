@@ -39,6 +39,15 @@ service cloud.firestore {
         && (!('updatedAt' in data) || data.updatedAt is string);
     }
 
+    function isValidPingSession(data) {
+      return data.keys().hasAll(['id', 'startedAt', 'targetIp', 'pingCount'])
+        && data.id is string && data.id.size() <= 128
+        && data.startedAt is string && data.startedAt.size() <= 64
+        && data.targetIp is string && data.targetIp.size() <= 64
+        && data.pingCount is number
+        && (!('completedAt' in data) || (data.completedAt is string && data.completedAt.size() <= 64));
+    }
+
     // Connection verification endpoint (read-only probe)
     match /test/{docId} {
       allow read: if true;
@@ -62,6 +71,17 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'updatedAt']);
 
       allow delete: if false;
+    }
+
+    // Ping Sessions Collection (Operator multi-device synchronization)
+    match /ping_sessions/{sessionId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn()
+        && isValidId(sessionId)
+        && incoming().id == sessionId
+        && isValidPingSession(incoming());
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(sessionId);
     }
   }
 }
