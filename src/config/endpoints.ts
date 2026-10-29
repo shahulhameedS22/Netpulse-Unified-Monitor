@@ -31,7 +31,7 @@ export const UNIFIED_ENDPOINTS: UnifiedEndpoint[] = [
   {
     id: 'in-dc01',
     serverCode: 'IN-DC01',
-    name: 'India - INDC01',
+    name: 'India',
     fullName: 'Bangalore Data Center',
     location: 'Tier III Data Center',
     country: 'India',
@@ -49,7 +49,7 @@ export const UNIFIED_ENDPOINTS: UnifiedEndpoint[] = [
   {
     id: 'in-dc02',
     serverCode: 'IN-DC02',
-    name: 'India - INDC02',
+    name: 'India',
     fullName: 'Bangalore Data Center',
     location: 'Tier III Data Center',
     country: 'India',
@@ -67,7 +67,7 @@ export const UNIFIED_ENDPOINTS: UnifiedEndpoint[] = [
   {
     id: 'lk-dc01',
     serverCode: 'LK-DC01',
-    name: 'Sri Lanka - LKDC01',
+    name: 'Sri Lanka',
     fullName: 'Sri Lanka Data Center',
     location: 'SLT Tier III Facility',
     country: 'Sri Lanka',
@@ -85,7 +85,7 @@ export const UNIFIED_ENDPOINTS: UnifiedEndpoint[] = [
   {
     id: 'sg-dc01',
     serverCode: 'SG-DC01',
-    name: 'Singapore - SGDC01',
+    name: 'Singapore',
     fullName: 'Singapore Data Center',
     location: 'Equinix SG2 Facility',
     country: 'Singapore',
