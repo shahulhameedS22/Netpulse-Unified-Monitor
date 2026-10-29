@@ -33,12 +33,44 @@
         }
       },
       "required": ["userId", "fullName", "email"]
+    },
+    "PingSession": {
+      "title": "Ping Monitoring Session",
+      "description": "Historical record of multi-region ICMP ping benchmark test",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique session identifier"
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "ISO timestamp when probing started"
+        },
+        "completedAt": {
+          "type": "string",
+          "description": "ISO timestamp when probing completed"
+        },
+        "targetIp": {
+          "type": "string",
+          "description": "Target IP address probed (8.8.8.8)"
+        },
+        "pingCount": {
+          "type": "number",
+          "description": "Packets dispatched per region"
+        }
+      },
+      "required": ["id", "startedAt", "targetIp", "pingCount"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profile records restricted to owner and authenticated operators"
+    },
+    "/ping_sessions/{sessionId}": {
+      "schema": "PingSession",
+      "description": "Persistent ping benchmark session history accessible across operator devices"
     }
   }
 }
