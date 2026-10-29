@@ -12,7 +12,16 @@ import express, { type Request, type Response, type NextFunction, type Applicati
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { dispatchSpeedTestRoute } from './speedTestApi.ts';
-import { getAllSessions, addSession, deleteSession, clearSessions } from './sessionStore.ts';
+import {
+  getAllSessions,
+  addSession,
+  deleteSession,
+  clearSessions,
+  getAllSpeedSessions,
+  addSpeedSession,
+  deleteSpeedSession,
+  clearSpeedSessions,
+} from './sessionStore.ts';
 
 dotenv.config();
 
@@ -877,6 +886,51 @@ export function createApiApp(): Application {
       res.json({ success: true, count: 0 });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message || 'Failed to clear sessions' });
+    }
+  });
+
+  /**
+   * Speed Test Session History Endpoints (Cross-Device & Persistent)
+   */
+  apiRouter.get('/sessions/speedtest', (_req: Request, res: Response) => {
+    try {
+      const sessions = getAllSpeedSessions();
+      res.json({ success: true, count: sessions.length, sessions });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to get speed test sessions' });
+    }
+  });
+
+  apiRouter.post('/sessions/speedtest', (req: Request, res: Response) => {
+    try {
+      const session = req.body?.session || req.body;
+      if (!session || !session.id) {
+        res.status(400).json({ success: false, error: 'Invalid session payload. Missing session.id' });
+        return;
+      }
+      const updated = addSpeedSession(session);
+      res.json({ success: true, count: updated.length, session });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to save speed test session' });
+    }
+  });
+
+  apiRouter.delete('/sessions/speedtest/:id', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updated = deleteSpeedSession(id);
+      res.json({ success: true, count: updated.length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to delete speed test session' });
+    }
+  });
+
+  apiRouter.delete('/sessions/speedtest', (_req: Request, res: Response) => {
+    try {
+      clearSpeedSessions();
+      res.json({ success: true, count: 0 });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to clear speed test sessions' });
     }
   });
 
