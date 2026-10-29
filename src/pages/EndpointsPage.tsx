@@ -128,7 +128,7 @@ export const EndpointsPage: React.FC = () => {
                     </div>
                     <div className="font-mono text-xs text-white font-bold">8.8.8.8 (Google DNS)</div>
                     <div className="text-[11px] text-slate-300 font-medium">
-                      Dispatched via regional daemon / outbound push agent
+                      Dispatched via outbound push agent
                     </div>
                   </div>
                 </div>
