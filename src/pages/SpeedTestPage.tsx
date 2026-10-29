@@ -8,7 +8,6 @@ import {
   Play,
   Square,
   RotateCcw,
-  SlidersHorizontal,
   ShieldCheck,
   Zap,
   CheckCircle2,
@@ -16,7 +15,19 @@ import {
   Clock,
   Activity,
   Gauge,
+  History,
+  ChevronRight,
 } from 'lucide-react';
+import { type SpeedTestSession } from '../types/speedSession';
+import {
+  loadStoredSpeedSessions,
+  loadAllSpeedSessions,
+  persistSpeedSession,
+  clearAllSpeedSessions,
+  removeSpeedSession,
+  formatSessionDateTime,
+} from '../services/speedHistoryStorage';
+import { SpeedSessionDetailModal } from '../components/SpeedSessionDetailModal';
 
 interface SpeedTestPageProps {
   onTestRunningChange?: (running: boolean) => void;
@@ -37,7 +48,12 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
   const [activeRegionIndex, setActiveRegionIndex] = useState<number | null>(null);
   const [isSequenceRunning, setIsSequenceRunning] = useState<boolean>(false);
   const [hasCompletedRun, setHasCompletedRun] = useState<boolean>(false);
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState<boolean>(false);
+
+  // History & Storage
+  const [historySessions, setHistorySessions] = useState<SpeedTestSession[]>(() => loadStoredSpeedSessions());
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [selectedDetailSession, setSelectedDetailSession] = useState<SpeedTestSession | null>(null);
+  const sessionStartTimeRef = useRef<string | null>(null);
 
   const isCancelledRef = useRef<boolean>(false);
   const activeIndexRef = useRef<number | null>(null);
@@ -48,6 +64,20 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
   useEffect(() => {
     onTestRunningChange?.(isSequenceRunning);
   }, [isSequenceRunning, onTestRunningChange]);
+
+  // Load persistent speed test sessions from server API & Firestore across reloads and shared links
+  useEffect(() => {
+    let isMounted = true;
+    loadAllSpeedSessions().then((sessions) => {
+      if (!isMounted) return;
+      if (sessions && sessions.length > 0) {
+        setHistorySessions(sessions);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -62,6 +92,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
     isCancelledRef.current = false;
     setIsSequenceRunning(true);
     setHasCompletedRun(false);
+    sessionStartTimeRef.current = new Date().toISOString();
 
     setRegionStates(
       UNIFIED_ENDPOINTS.map((endpoint) => ({
@@ -182,6 +213,57 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
 
     if (!isCancelledRef.current) {
       setHasCompletedRun(true);
+
+      setRegionStates((finalStates) => {
+        const completedRegionsList = finalStates.filter((r) => r.status === 'completed');
+        const failedRegionsList = finalStates.filter((r) => r.status === 'failed');
+
+        const downloads = completedRegionsList.map((r) => r.result?.downloadMbps || 0).filter((v) => v > 0);
+        const uploads = completedRegionsList.map((r) => r.result?.uploadMbps || 0).filter((v) => v > 0);
+        const pings = completedRegionsList.map((r) => r.result?.pingMs || 0).filter((v) => v > 0);
+
+        const avgDownloadMbps = downloads.length ? downloads.reduce((a, b) => a + b, 0) / downloads.length : 0;
+        const avgUploadMbps = uploads.length ? uploads.reduce((a, b) => a + b, 0) / uploads.length : 0;
+        const avgPingMs = pings.length ? pings.reduce((a, b) => a + b, 0) / pings.length : 0;
+        const peakDownloadMbps = downloads.length ? Math.max(...downloads) : 0;
+
+        const regionsMap: Record<string, any> = {};
+        for (const reg of finalStates) {
+          regionsMap[reg.endpoint.serverCode] = {
+            serverCode: reg.endpoint.serverCode,
+            name: reg.endpoint.name,
+            country: reg.endpoint.country,
+            status: reg.status,
+            downloadMbps: reg.result?.downloadMbps ?? null,
+            uploadMbps: reg.result?.uploadMbps ?? null,
+            pingMs: reg.result?.pingMs ?? null,
+            jitterMs: reg.result?.jitterMs ?? null,
+            errorMessage: reg.errorMessage ?? null,
+          };
+        }
+
+        const speedSession: SpeedTestSession = {
+          id: `spd_${Date.now()}`,
+          startedAt: sessionStartTimeRef.current || new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          regions: regionsMap,
+          summary: {
+            totalRegions: finalStates.length,
+            completedRegions: completedRegionsList.length,
+            failedRegions: failedRegionsList.length,
+            avgDownloadMbps,
+            avgUploadMbps,
+            avgPingMs,
+            peakDownloadMbps,
+          },
+        };
+
+        persistSpeedSession(speedSession).then((updated) => {
+          setHistorySessions(updated);
+        });
+
+        return finalStates;
+      });
     }
   };
 
@@ -230,15 +312,30 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
             <span className="text-xs text-slate-300 font-medium">LibreSpeed Multi-Region Pipeline</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-            All Region Network Speed Test
+            4-Region Network Speed Test
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl font-normal leading-relaxed">
-            Sequential real-time speed measurement across all dedicated data center servers:<br></br>
-            <strong className="text-cyan-300"> IN-DC01 (TATA Node)</strong> →{' '}
-            <strong className="text-blue-300">IN-DC02 (ACT Node)</strong> →{' '}
-            <strong className="text-emerald-300">LK-DC01 (SLT Mobitel)</strong> →{' '}
-            <strong className="text-indigo-300">SG-DC01 (Singtel)</strong>.
+            Sequential real-time speed measurement across all four dedicated data center servers:
+            <strong className="text-cyan-300"> IN-DC01 (Bangalore Data Center)</strong> →{' '}
+            <strong className="text-blue-300">IN-DC02 (Bangalore Data Center)</strong> →{' '}
+            <strong className="text-emerald-300">LK-DC01 (Sri Lanka Data Center)</strong> →{' '}
+            <strong className="text-indigo-300">SG-DC01 (Singapore Data Center)</strong>.
           </p>
+        </div>
+
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            type="button"
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+              showHistory
+                ? 'bg-cyan-600 text-white border-cyan-400 shadow-md shadow-cyan-600/30'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-600'
+            }`}
+          >
+            <History className="w-4 h-4 text-cyan-400" />
+            <span>Session History ({historySessions.length})</span>
+          </button>
         </div>
       </div>
 
@@ -268,8 +365,8 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
               {isSequenceRunning && activeRegion
                 ? `Benchmarking ${activeRegion.endpoint.serverCode} (${activeRegion.endpoint.name})`
                 : hasCompletedRun
-                ? 'All Regional Tests Processed'
-                : 'Start Sequential Benchmark'}
+                ? 'All 4 Regional Tests Processed'
+                : 'Start Sequential 4-Region Benchmark'}
             </h2>
             <p className="text-xs text-slate-300 leading-relaxed font-normal">
               {isSequenceRunning
@@ -329,7 +426,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[10px] font-mono text-slate-400 font-semibold uppercase tracking-wider">
-                    Region 0{idx + 1}
+                    Step 0{idx + 1}
                   </span>
                   {reg.status === 'waiting' && (
                     <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
@@ -475,6 +572,126 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
         </div>
       </section>
 
+      {/* Speed Test History Drawer */}
+      {showHistory && (
+        <section className="bg-[#141e33] border border-cyan-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-700 flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <History className="w-4 h-4 text-cyan-400" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                Recent Speed Test Sessions
+              </h3>
+              <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1.5 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Cloud &amp; Server Synced
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {historySessions.length > 0 && (
+                <button
+                  onClick={() => setSelectedDetailSession(historySessions[0])}
+                  type="button"
+                  className="text-xs text-cyan-300 hover:text-white bg-cyan-500/20 hover:bg-cyan-500/30 px-2.5 py-1 rounded-lg border border-cyan-400/30 transition-colors cursor-pointer font-bold"
+                >
+                  Last Session Details
+                </button>
+              )}
+              <span className="text-xs text-slate-400 font-mono">
+                {historySessions.length} session{historySessions.length === 1 ? '' : 's'} logged
+              </span>
+              {historySessions.length > 0 && (
+                <button
+                  onClick={async () => {
+                    await clearAllSpeedSessions();
+                    setHistorySessions([]);
+                  }}
+                  type="button"
+                  className="text-xs text-rose-400 hover:text-rose-300 transition-colors ml-2 cursor-pointer font-semibold"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
+          </div>
+
+          {historySessions.length === 0 ? (
+            <div className="text-center py-8 text-xs text-slate-400 font-mono">
+              No speed test sessions logged yet. Click &quot;Start Speed Test&quot; to begin.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-800/80 max-h-80 overflow-y-auto">
+              {historySessions.map((sess) => {
+                const dt = formatSessionDateTime(sess.startedAt);
+
+                return (
+                  <div
+                    key={sess.id}
+                    className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:bg-slate-800/30 px-2 rounded-xl transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-sans font-bold text-slate-100">{dt.dateFull}</span>
+                        <span className="font-mono font-bold text-cyan-300 text-xs bg-slate-900/90 px-2 py-0.5 rounded border border-cyan-500/40 tracking-wider shadow-inner">
+                          {dt.timeWithSeconds}
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-mono">({dt.relative})</span>
+                      </div>
+                      <span className="font-mono text-[11px] text-slate-400 mt-1 block">
+                        ID: {sess.id} • 4 Regional Nodes Sequenced
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 font-mono text-xs">
+                        <span className="text-emerald-400 font-semibold" title="Completed regions">
+                          ✓ {sess.summary?.completedRegions ?? 0}
+                        </span>
+                        {(sess.summary?.failedRegions ?? 0) > 0 && (
+                          <span className="text-rose-400 font-semibold" title="Failed regions">
+                            ✕ {sess.summary.failedRegions}
+                          </span>
+                        )}
+                        <span className="text-cyan-300 font-bold">
+                          DL: {sess.summary?.avgDownloadMbps ? `${sess.summary.avgDownloadMbps.toFixed(1)}M` : '—'}
+                        </span>
+                        <span className="text-blue-300 font-bold">
+                          UL: {sess.summary?.avgUploadMbps ? `${sess.summary.avgUploadMbps.toFixed(1)}M` : '—'}
+                        </span>
+                        <span className="text-slate-300">
+                          Ping: {sess.summary?.avgPingMs ? `${sess.summary.avgPingMs.toFixed(0)}ms` : '—'}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedDetailSession(sess)}
+                        type="button"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/40 transition-colors cursor-pointer shadow-xs shrink-0"
+                      >
+                        <span>Details</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const updated = await removeSpeedSession(sess.id);
+                          setHistorySessions(updated);
+                        }}
+                        type="button"
+                        title="Delete this session"
+                        className="text-slate-500 hover:text-rose-400 p-1 rounded transition-colors cursor-pointer text-xs"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Completion Banner */}
       {hasCompletedRun && !isSequenceRunning && (
         <section className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/40 border border-cyan-500/30 shadow-2xl animate-fade-in">
@@ -522,7 +739,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
         <div className="flex items-center justify-between pb-2 border-b border-slate-800">
           <div>
             <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight">
-              Regional Speed Results
+              Regional Speed Results (2×2 Grid)
             </h2>
             <p className="text-xs text-slate-400">
               Dedicated benchmarks for IN-DC01, IN-DC02, LK-DC01, and SG-DC01.
@@ -544,6 +761,12 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
           ))}
         </div>
       </section>
+
+      {/* Speed Test Session Details Modal */}
+      <SpeedSessionDetailModal
+        session={selectedDetailSession}
+        onClose={() => setSelectedDetailSession(null)}
+      />
     </div>
   );
 };
