@@ -51,62 +51,36 @@ export const LoginPage: React.FC = () => {
   };
 
   const displayError = validationError || authError;
-
-  const regionalBadges = [
-    { code: 'IN', name: 'IN-DC01', style: 'bg-cyan-500/20 text-cyan-300 border-cyan-400/40' },
-    { code: 'IN', name: 'IN-DC02', style: 'bg-blue-500/20 text-blue-300 border-blue-400/40' },
-    { code: 'SL', name: 'LK-DC01', style: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40' },
-    { code: 'SG', name: 'SG-DC01', style: 'bg-indigo-500/20 text-indigo-300 border-indigo-400/40' },
-  ];
-
+  
   return (
     <div className="min-h-screen bg-[#0b1329] text-slate-100 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden selection:bg-cyan-500/30 selection:text-cyan-200">
       {/* Background radial effects */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-10 right-10 w-80 h-80 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
 
-      <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10 text-center">
         {/* Brand Header */}
-        <div className="flex justify-center mb-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-cyan-400 via-blue-500 to-indigo-600 p-0.5 shadow-xl shadow-cyan-500/20">
-            <div className="w-full h-full bg-[#0c1424] rounded-[14px] flex items-center justify-center">
+        <div className="flex justify-center mb-3">
+          <div className="w-13 h-13 rounded-2xl bg-gradient-to-tr from-cyan-400 via-blue-500 to-indigo-600 p-0.5 shadow-xl shadow-cyan-500/20">
+            <div className="w-full h-full bg-[#0c1424] rounded-[14px] flex items-center justify-center p-2.5">
               <Activity className="w-7 h-7 text-cyan-400 stroke-[2.2]" />
             </div>
           </div>
         </div>
 
-        <h1 className="text-center text-2xl sm:text-3xl font-black tracking-tight text-white">
-          Network Operations Center
+        <h1 className="text-2xl sm:text-3xl font-black tracking-wider text-white uppercase">
+          NETWORK OPERATION CENTER
         </h1>
-        <p className="mt-2 text-center text-xs sm:text-sm text-slate-300 font-medium">
+        <p className="mt-2 text-xs sm:text-sm text-cyan-300 font-medium">
           Unified Speed Test &amp; Multi-Region Ping Monitor
         </p>
-
-        {/* 4 Regional Nodes Indicator with IN, IN, SL, SG */}
-        <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
-          {regionalBadges.map((node) => (
-            <span
-              key={node.name}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-bold border ${node.style}`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span>{node.code}</span>
-              <span className="text-slate-400 font-normal">({node.name})</span>
-            </span>
-          ))}
-        </div>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10">
         <div className="bg-[#141e33] border border-slate-700/80 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-700/80 mb-6">
-            <div className="flex items-center gap-2 text-xs font-bold text-white">
-              <Lock className="w-4 h-4 text-cyan-400" />
-              <span>Operator Authentication</span>
-            </div>
-            <span className="text-[11px] font-mono font-bold text-emerald-300 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" /> Firebase Secured
-            </span>
+          <div className="flex items-center gap-2 pb-4 border-b border-slate-700/80 mb-6 text-sm font-bold text-white">
+            <Lock className="w-4 h-4 text-cyan-400" />
+            <span>Operator Authentication</span>
           </div>
 
           {displayError && (
@@ -198,20 +172,8 @@ export const LoginPage: React.FC = () => {
               )}
             </button>
           </form>
-
-          {/* Admin Onboarding notice */}
-          <div className="mt-6 pt-5 border-t border-slate-700/80 flex items-center justify-between text-xs">
-            <span className="text-slate-300 font-medium">First time setup or new operator?</span>
-            <button
-              onClick={() => setIsAdminProvisionOpen(true)}
-              type="button"
-              className="inline-flex items-center gap-1.5 text-amber-400 hover:text-amber-300 font-bold transition-colors cursor-pointer"
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>Admin Setup</span>
-            </button>
-          </div>
         </div>
+      </div>
 
         {/* Security & System Info Footer */}
         <div className="mt-6 text-center space-y-2">
@@ -219,16 +181,7 @@ export const LoginPage: React.FC = () => {
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             <span>Authorized Network Infrastructure Monitoring System</span>
           </p>
-          <div className="text-[11px] text-cyan-200 font-mono flex items-center justify-center gap-3">
-            <span>Direct LibreSpeed Relay</span>
-            <span>•</span>
-            <span>ICMP 8.8.8.8 Native Probes</span>
-            <span>•</span>
-            <span>Zero Simulated Metrics</span>
-          </div>
         </div>
-      </div>
-
       {/* Modals */}
       <ForgotPasswordModal
         isOpen={isForgotPasswordOpen}
