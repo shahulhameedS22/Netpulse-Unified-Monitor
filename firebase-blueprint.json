@@ -61,6 +61,26 @@
         }
       },
       "required": ["id", "startedAt", "targetIp", "pingCount"]
+    },
+    "SpeedTestSession": {
+      "title": "Speed Test Session",
+      "description": "Historical record of 4-region LibreSpeed sequential benchmark",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique speed session identifier"
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "ISO timestamp when speed testing began"
+        },
+        "completedAt": {
+          "type": "string",
+          "description": "ISO timestamp when speed testing concluded"
+        }
+      },
+      "required": ["id", "startedAt"]
     }
   },
   "firestore": {
@@ -71,6 +91,10 @@
     "/ping_sessions/{sessionId}": {
       "schema": "PingSession",
       "description": "Persistent ping benchmark session history accessible across operator devices"
+    },
+    "/speedtest_sessions/{sessionId}": {
+      "schema": "SpeedTestSession",
+      "description": "Persistent speed test benchmark session history across operator devices"
     }
   }
 }
