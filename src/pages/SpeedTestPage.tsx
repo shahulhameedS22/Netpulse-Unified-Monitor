@@ -312,14 +312,14 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
             <span className="text-xs text-slate-300 font-medium">LibreSpeed Multi-Region Pipeline</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-            4-Region Network Speed Test
+            All Region Network Speed Test
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl font-normal leading-relaxed">
-            Sequential real-time speed measurement across all four dedicated data center servers:
-            <strong className="text-cyan-300"> IN-DC01 (Bangalore Data Center)</strong> →{' '}
-            <strong className="text-blue-300">IN-DC02 (Bangalore Data Center)</strong> →{' '}
-            <strong className="text-emerald-300">LK-DC01 (Sri Lanka Data Center)</strong> →{' '}
-            <strong className="text-indigo-300">SG-DC01 (Singapore Data Center)</strong>.
+            Sequential real-time speed measurement across all four dedicated data center servers:<br></br>
+            <strong className="text-cyan-300"> IN-DC01 (TATA Node)</strong> →{' '}
+            <strong className="text-blue-300">IN-DC02 (ACT Node)</strong> →{' '}
+            <strong className="text-emerald-300">LK-DC01 (SLT Mobitel)</strong> →{' '}
+            <strong className="text-indigo-300">SG-DC01 (Singtel)</strong>.
           </p>
         </div>
 
@@ -366,12 +366,12 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
                 ? `Benchmarking ${activeRegion.endpoint.serverCode} (${activeRegion.endpoint.name})`
                 : hasCompletedRun
                 ? 'All 4 Regional Tests Processed'
-                : 'Start Sequential 4-Region Benchmark'}
+                : 'Start Sequential Benchmark'}
             </h2>
             <p className="text-xs text-slate-300 leading-relaxed font-normal">
               {isSequenceRunning
                 ? 'Tests run sequentially in strict order. Real-time chunked telemetry.'
-                : 'Runs sequentially across all 4 servers using authentic LibreSpeed streams.'}
+                : 'Runs sequentially across all servers using authentic LibreSpeed streams.'}
             </p>
           </div>
 
@@ -426,7 +426,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[10px] font-mono text-slate-400 font-semibold uppercase tracking-wider">
-                    Step 0{idx + 1}
+                    Region 0{idx + 1}
                   </span>
                   {reg.status === 'waiting' && (
                     <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
