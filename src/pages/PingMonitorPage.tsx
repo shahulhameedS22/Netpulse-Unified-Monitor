@@ -14,6 +14,7 @@ import { executeRealRegionalPing } from '../services/regionalApi';
 import { SummaryCards } from '../components/SummaryCards';
 import { RegionCard } from '../components/RegionCard';
 import { PacketInspectionModal } from '../components/PacketInspectionModal';
+import { SessionDetailModal } from '../components/SessionDetailModal';
 import {
   Play,
   RotateCcw,
@@ -27,6 +28,7 @@ import {
   Loader2,
   Clock,
   History,
+  ChevronRight,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'noc_ping_sessions_history_v1';
@@ -48,6 +50,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
 
   // Modals
   const [inspectModalResult, setInspectModalResult] = useState<RegionPingResult | null>(null);
+  const [selectedDetailSession, setSelectedDetailSession] = useState<PingSession | null>(null);
   const [historySessions, setHistorySessions] = useState<PingSession[]>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -246,10 +249,10 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
         isRunning={isRunning}
       />
 
-      {/* History Drawer (if open) with clear Date & Time */}
+      {/* History Drawer (if open) with clear Date & Time and Details button */}
       {showHistory && (
         <section className="bg-[#141e33] border border-indigo-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-700">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-700 flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <History className="w-4 h-4 text-cyan-400" />
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
@@ -257,6 +260,15 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
               </h3>
             </div>
             <div className="flex items-center gap-2">
+              {historySessions.length > 0 && (
+                <button
+                  onClick={() => setSelectedDetailSession(historySessions[0])}
+                  type="button"
+                  className="text-xs text-cyan-300 hover:text-white bg-cyan-500/20 hover:bg-cyan-500/30 px-2.5 py-1 rounded-lg border border-cyan-400/30 transition-colors cursor-pointer font-bold"
+                >
+                  Last Session Details
+                </button>
+              )}
               <span className="text-xs text-slate-400 font-mono">
                 {historySessions.length} sessions logged
               </span>
@@ -299,7 +311,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
                   : '';
 
                 return (
-                  <div key={sess.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <div key={sess.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-sans font-bold text-slate-200">{dateStr}</span>
@@ -311,16 +323,28 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
                         {sess.id} • {sess.targetIp}
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 font-mono">
-                      <span className="text-emerald-400 font-semibold">
-                        ✓ {sess.summary?.successfulRegions ?? 0}
-                      </span>
-                      <span className="text-rose-400 font-semibold">
-                        ✕ {sess.summary?.failedOrUnavailableRegions ?? 0}
-                      </span>
-                      <span className="text-cyan-400 font-bold">
-                        Avg: {sess.summary?.overallAvgLatencyMs ? `${sess.summary.overallAvgLatencyMs}ms` : '—'}
-                      </span>
+
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 font-mono">
+                        <span className="text-emerald-400 font-semibold">
+                          ✓ {sess.summary?.successfulRegions ?? 0}
+                        </span>
+                        <span className="text-rose-400 font-semibold">
+                          ✕ {sess.summary?.failedOrUnavailableRegions ?? 0}
+                        </span>
+                        <span className="text-cyan-400 font-bold">
+                          Avg: {sess.summary?.overallAvgLatencyMs ? `${sess.summary.overallAvgLatencyMs}ms` : '—'}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedDetailSession(sess)}
+                        type="button"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/40 transition-colors cursor-pointer shadow-xs shrink-0"
+                      >
+                        <span>Details</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 );
@@ -364,6 +388,12 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
       <PacketInspectionModal
         onClose={() => setInspectModalResult(null)}
         result={inspectModalResult}
+      />
+
+      {/* Session Details Modal */}
+      <SessionDetailModal
+        session={selectedDetailSession}
+        onClose={() => setSelectedDetailSession(null)}
       />
     </div>
   );
