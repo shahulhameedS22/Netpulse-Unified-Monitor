@@ -31,7 +31,14 @@ import {
   ChevronRight,
 } from 'lucide-react';
 
-const STORAGE_KEY = 'noc_ping_sessions_history_v1';
+import {
+  loadStoredPingSessions,
+  loadAllPingSessions,
+  persistPingSession,
+  clearAllPingSessions,
+  removePingSession,
+  formatSessionDateTime,
+} from '../services/pingHistoryStorage';
 
 interface PingMonitorPageProps {
   onTestRunningChange?: (running: boolean) => void;
@@ -48,17 +55,10 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
   const [targetIp, setTargetIp] = useState('8.8.8.8');
   const [pingCount, setPingCount] = useState(30);
 
-  // Modals
+  // Modals & Storage
   const [inspectModalResult, setInspectModalResult] = useState<RegionPingResult | null>(null);
   const [selectedDetailSession, setSelectedDetailSession] = useState<PingSession | null>(null);
-  const [historySessions, setHistorySessions] = useState<PingSession[]>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [historySessions, setHistorySessions] = useState<PingSession[]>(() => loadStoredPingSessions());
   const [showHistory, setShowHistory] = useState(false);
 
   const isRunning = isRunningAll || singleRunningId !== null;
@@ -66,6 +66,23 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
   useEffect(() => {
     onTestRunningChange?.(isRunning);
   }, [isRunning, onTestRunningChange]);
+
+  // Load persistent sessions from server API & Firestore across page refreshes and copied links
+  useEffect(() => {
+    let isMounted = true;
+    loadAllPingSessions().then((sessions) => {
+      if (!isMounted) return;
+      if (sessions && sessions.length > 0) {
+        setHistorySessions(sessions);
+        // If current session has not run a test yet, populate summary and last session time
+        setSessionSummary((current) => current || sessions[0].summary || null);
+        setLastSessionTime((currentTime) => currentTime || sessions[0].completedAt || sessions[0].startedAt);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleRunAll = async () => {
     if (isRunning) return;
@@ -84,15 +101,9 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
       setSessionSummary(session.summary);
       setLastSessionTime(session.completedAt || new Date().toISOString());
 
-      // Save session permanently into browser local storage (100% free)
-      setHistorySessions((prev) => {
-        const updated = [session, ...prev.filter((s) => s.id !== session.id)].slice(0, 50);
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-        } catch {
-          // ignore quota limits
-        }
-        return updated;
+      // Save session across LocalStorage, server API, and Firestore
+      persistPingSession(session).then((updated) => {
+        setHistorySessions(updated);
       });
     } catch (err: any) {
       console.error('Ping session error:', err);
@@ -253,11 +264,15 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
       {showHistory && (
         <section className="bg-[#141e33] border border-indigo-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
           <div className="flex items-center justify-between pb-3 border-b border-slate-700 flex-wrap gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <History className="w-4 h-4 text-cyan-400" />
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                 Recent Ping Test Sessions
               </h3>
+              <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1.5 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Cloud &amp; Server Synced
+              </span>
             </div>
             <div className="flex items-center gap-2">
               {historySessions.length > 0 && (
@@ -270,66 +285,53 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
                 </button>
               )}
               <span className="text-xs text-slate-400 font-mono">
-                {historySessions.length} sessions logged
+                {historySessions.length} session{historySessions.length === 1 ? '' : 's'} logged
               </span>
               {historySessions.length > 0 && (
                 <button
-                  onClick={() => {
-                    localStorage.removeItem(STORAGE_KEY);
+                  onClick={async () => {
+                    await clearAllPingSessions();
                     setHistorySessions([]);
                   }}
                   type="button"
                   className="text-xs text-rose-400 hover:text-rose-300 transition-colors ml-2 cursor-pointer font-semibold"
                 >
-                  Clear
+                  Clear All
                 </button>
               )}
             </div>
           </div>
 
           {historySessions.length === 0 ? (
-            <div className="text-center py-8 text-xs text-slate-500 font-mono">
+            <div className="text-center py-8 text-xs text-slate-400 font-mono">
               No sessions logged yet. Click &quot;Run Ping (All 4 Regions)&quot; to begin.
             </div>
           ) : (
-            <div className="divide-y divide-slate-800/80 max-h-72 overflow-y-auto">
+            <div className="divide-y divide-slate-800/80 max-h-80 overflow-y-auto">
               {historySessions.map((sess) => {
-                const dateObj = new Date(sess.startedAt);
-                const dateStr = !isNaN(dateObj.getTime())
-                  ? dateObj.toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })
-                  : 'Recorded';
-                const timeStr = !isNaN(dateObj.getTime())
-                  ? dateObj.toLocaleTimeString('en-US', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })
-                  : '';
+                const dt = formatSessionDateTime(sess.startedAt);
 
                 return (
-                  <div key={sess.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div key={sess.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:bg-slate-800/30 px-2 rounded-xl transition-colors">
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-sans font-bold text-slate-200">{dateStr}</span>
-                        <span className="font-mono font-black text-cyan-300 text-xs bg-slate-900 px-1.5 py-0.5 rounded border border-cyan-500/30">
-                          {timeStr}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-sans font-bold text-slate-100">{dt.dateFull}</span>
+                        <span className="font-mono font-bold text-cyan-300 text-xs bg-slate-900/90 px-2 py-0.5 rounded border border-cyan-500/40 tracking-wider shadow-inner">
+                          {dt.timeWithSeconds}
                         </span>
+                        <span className="text-[11px] text-slate-400 font-mono">({dt.relative})</span>
                       </div>
-                      <span className="font-mono text-[11px] text-slate-400 mt-0.5 block">
-                        {sess.id} • {sess.targetIp}
+                      <span className="font-mono text-[11px] text-slate-400 mt-1 block">
+                        ID: {sess.id} • Target: {sess.targetIp} • {sess.pingCount} pkts
                       </span>
                     </div>
 
                     <div className="flex items-center gap-3">
                       <div className="flex items-center gap-3 font-mono">
-                        <span className="text-emerald-400 font-semibold">
+                        <span className="text-emerald-400 font-semibold" title="Successful regions">
                           ✓ {sess.summary?.successfulRegions ?? 0}
                         </span>
-                        <span className="text-rose-400 font-semibold">
+                        <span className="text-rose-400 font-semibold" title="Failed regions">
                           ✕ {sess.summary?.failedOrUnavailableRegions ?? 0}
                         </span>
                         <span className="text-cyan-400 font-bold">
@@ -340,10 +342,23 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
                       <button
                         onClick={() => setSelectedDetailSession(sess)}
                         type="button"
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/40 transition-colors cursor-pointer shadow-xs shrink-0"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/40 transition-colors cursor-pointer shadow-xs shrink-0"
                       >
                         <span>Details</span>
                         <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const updated = await removePingSession(sess.id);
+                          setHistorySessions(updated);
+                        }}
+                        type="button"
+                        title="Delete this session"
+                        className="text-slate-500 hover:text-rose-400 p-1 rounded transition-colors cursor-pointer text-xs"
+                      >
+                        ✕
                       </button>
                     </div>
                   </div>
