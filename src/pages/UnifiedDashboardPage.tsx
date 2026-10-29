@@ -104,19 +104,7 @@ export const UnifiedDashboardPage: React.FC<UnifiedDashboardPageProps> = ({
               Consolidated real-time benchmarking platform connecting regional data centers in India, Sri Lanka, and Singapore.
               Run high-throughput LibreSpeed speed tests and continuous ICMP latency monitoring from a single interface.
             </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={checkHealth}
-              disabled={refreshing}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-600 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${refreshing ? 'animate-spin' : ''}`} />
-              <span>Probe Node Health</span>
-            </button>
-          </div>
-        </div>
+         
       </div>
 
       {/* Two Core Applications Quick Launch Cards */}
@@ -227,7 +215,7 @@ export const UnifiedDashboardPage: React.FC<UnifiedDashboardPageProps> = ({
             <Server className="w-5 h-5 text-cyan-400" />
             <div>
               <h2 className="text-lg font-black text-white">Regional Data Center Nodes</h2>
-              <p className="text-xs text-slate-300">Real connectivity status across the 4 authorized deployment locations</p>
+              <p className="text-xs text-slate-300">Real connectivity status across the authorized deployment locations</p>
             </div>
           </div>
           <button
