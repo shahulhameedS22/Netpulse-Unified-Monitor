@@ -83,5 +83,23 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isSignedIn() && isValidId(sessionId);
     }
+
+    function isValidSpeedSession(data) {
+      return data.keys().hasAll(['id', 'startedAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.startedAt is string && data.startedAt.size() <= 64
+        && (!('completedAt' in data) || (data.completedAt is string && data.completedAt.size() <= 64));
+    }
+
+    // Speed Test Sessions Collection (Operator multi-device synchronization)
+    match /speedtest_sessions/{sessionId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn()
+        && isValidId(sessionId)
+        && incoming().id == sessionId
+        && isValidSpeedSession(incoming());
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(sessionId);
+    }
   }
 }
