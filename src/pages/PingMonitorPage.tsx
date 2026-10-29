@@ -29,6 +29,8 @@ import {
   History,
 } from 'lucide-react';
 
+const STORAGE_KEY = 'noc_ping_sessions_history_v1';
+
 interface PingMonitorPageProps {
   onTestRunningChange?: (running: boolean) => void;
 }
@@ -46,7 +48,14 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
 
   // Modals
   const [inspectModalResult, setInspectModalResult] = useState<RegionPingResult | null>(null);
-  const [historySessions, setHistorySessions] = useState<PingSession[]>([]);
+  const [historySessions, setHistorySessions] = useState<PingSession[]>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
   const [showHistory, setShowHistory] = useState(false);
 
   const isRunning = isRunningAll || singleRunningId !== null;
@@ -71,7 +80,17 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
       setRegionalResults(session.regions);
       setSessionSummary(session.summary);
       setLastSessionTime(session.completedAt || new Date().toISOString());
-      setHistorySessions((prev) => [session, ...prev.slice(0, 19)]);
+
+      // Save session permanently into browser local storage (100% free)
+      setHistorySessions((prev) => {
+        const updated = [session, ...prev.filter((s) => s.id !== session.id)].slice(0, 50);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+        } catch {
+          // ignore quota limits
+        }
+        return updated;
+      });
     } catch (err: any) {
       console.error('Ping session error:', err);
     } finally {
@@ -149,7 +168,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
             Multi-Region Ping Monitor
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl font-normal leading-relaxed">
-            Concurrent round-trip latency and packet loss benchmarking to Google DNS (8.8.8.8) dispatched across <br></br> 
+            Concurrent round-trip latency and packet loss benchmarking to Google DNS (8.8.8.8) dispatched across <br /> 
             <strong className="text-cyan-300"> IN-DC01</strong>, <strong className="text-blue-300">IN-DC02</strong>, <strong className="text-emerald-300">LK-DC01</strong>, and <strong className="text-indigo-300">SG-DC01</strong>.
           </p>
         </div>
@@ -227,7 +246,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
         isRunning={isRunning}
       />
 
-      {/* History Drawer (if open) */}
+      {/* History Drawer (if open) with clear Date & Time */}
       {showHistory && (
         <section className="bg-[#141e33] border border-indigo-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
           <div className="flex items-center justify-between pb-3 border-b border-slate-700">
@@ -237,38 +256,75 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
                 Recent Ping Test Sessions
               </h3>
             </div>
-            <span className="text-xs text-slate-400 font-mono">
-              {historySessions.length} sessions logged
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 font-mono">
+                {historySessions.length} sessions logged
+              </span>
+              {historySessions.length > 0 && (
+                <button
+                  onClick={() => {
+                    localStorage.removeItem(STORAGE_KEY);
+                    setHistorySessions([]);
+                  }}
+                  type="button"
+                  className="text-xs text-rose-400 hover:text-rose-300 transition-colors ml-2 cursor-pointer font-semibold"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
           {historySessions.length === 0 ? (
             <div className="text-center py-8 text-xs text-slate-500 font-mono">
-              No sessions logged in memory yet. Click &quot;Run Ping (All 4 Regions)&quot; to begin.
+              No sessions logged yet. Click &quot;Run Ping (All 4 Regions)&quot; to begin.
             </div>
           ) : (
             <div className="divide-y divide-slate-800/80 max-h-72 overflow-y-auto">
-              {historySessions.map((sess) => (
-                <div key={sess.id} className="py-3 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-mono font-bold text-white">{sess.id}</span>
-                    <span className="text-slate-500 ml-2">
-                      {new Date(sess.startedAt).toLocaleTimeString()}
-                    </span>
+              {historySessions.map((sess) => {
+                const dateObj = new Date(sess.startedAt);
+                const dateStr = !isNaN(dateObj.getTime())
+                  ? dateObj.toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })
+                  : 'Recorded';
+                const timeStr = !isNaN(dateObj.getTime())
+                  ? dateObj.toLocaleTimeString('en-US', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })
+                  : '';
+
+                return (
+                  <div key={sess.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-sans font-bold text-slate-200">{dateStr}</span>
+                        <span className="font-mono font-black text-cyan-300 text-xs bg-slate-900 px-1.5 py-0.5 rounded border border-cyan-500/30">
+                          {timeStr}
+                        </span>
+                      </div>
+                      <span className="font-mono text-[11px] text-slate-400 mt-0.5 block">
+                        {sess.id} • {sess.targetIp}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 font-mono">
+                      <span className="text-emerald-400 font-semibold">
+                        ✓ {sess.summary?.successfulRegions ?? 0}
+                      </span>
+                      <span className="text-rose-400 font-semibold">
+                        ✕ {sess.summary?.failedOrUnavailableRegions ?? 0}
+                      </span>
+                      <span className="text-cyan-400 font-bold">
+                        Avg: {sess.summary?.overallAvgLatencyMs ? `${sess.summary.overallAvgLatencyMs}ms` : '—'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 font-mono">
-                    <span className="text-emerald-400">
-                      ✓ {sess.summary.successfulRegions ?? 0}
-                    </span>
-                    <span className="text-rose-400">
-                      ✕ {sess.summary.failedOrUnavailableRegions ?? 0}
-                    </span>
-                    <span className="text-cyan-400">
-                      Avg: {sess.summary.overallAvgLatencyMs ? `${sess.summary.overallAvgLatencyMs}ms` : '—'}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
