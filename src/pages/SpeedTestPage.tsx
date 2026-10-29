@@ -490,9 +490,12 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
                 {/* Ping */}
                 <div>
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-amber-400 font-bold">
-  Ping: <span className="text-amber-300 font-black">{sess.summary?.avgPingMs ? `${sess.summary.avgPingMs.toFixed(0)}ms` : '—'}</span>
-</span>
+                    <span className="text-slate-400">1. Ping (Latency Probe)</span>
+                    <span className="font-mono text-amber-300 font-bold">
+                      {activeMetrics?.pingMs !== null && activeMetrics?.pingMs !== undefined
+                        ? `${activeMetrics.pingMs.toFixed(1)} ms`
+                        : '--'}
+                    </span>
                   </div>
                   <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
                     <div
@@ -654,9 +657,9 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
                         <span className="text-blue-300 font-bold">
                           UL: {sess.summary?.avgUploadMbps ? `${sess.summary.avgUploadMbps.toFixed(1)}M` : '—'}
                         </span>
-                       <span className="text-amber-400 font-bold">
-  Ping: <span className="text-amber-300 font-black">{sess.summary?.avgPingMs ? `${sess.summary.avgPingMs.toFixed(0)}ms` : '—'}</span>
-</span>
+                        <span className="text-amber-400 font-bold">
+                          Ping: <span className="text-amber-300 font-black">{sess.summary?.avgPingMs ? `${sess.summary.avgPingMs.toFixed(0)}ms` : '—'}</span>
+                        </span>
                       </div>
 
                       <button
