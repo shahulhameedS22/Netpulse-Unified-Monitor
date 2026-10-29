@@ -12,6 +12,7 @@ import express, { type Request, type Response, type NextFunction, type Applicati
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { dispatchSpeedTestRoute } from './speedTestApi.ts';
+import { getAllSessions, addSession, deleteSession, clearSessions } from './sessionStore.ts';
 
 dotenv.config();
 
@@ -834,6 +835,51 @@ export function createApiApp(): Application {
     }
   });
 
+  /**
+   * Ping Session History Endpoints (Cross-Device & Persistent)
+   */
+  apiRouter.get('/sessions/ping', (_req: Request, res: Response) => {
+    try {
+      const sessions = getAllSessions();
+      res.json({ success: true, count: sessions.length, sessions });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to get sessions' });
+    }
+  });
+
+  apiRouter.post('/sessions/ping', (req: Request, res: Response) => {
+    try {
+      const session = req.body?.session || req.body;
+      if (!session || !session.id) {
+        res.status(400).json({ success: false, error: 'Invalid session payload. Missing session.id' });
+        return;
+      }
+      const updated = addSession(session);
+      res.json({ success: true, count: updated.length, session });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to save session' });
+    }
+  });
+
+  apiRouter.delete('/sessions/ping/:id', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updated = deleteSession(id);
+      res.json({ success: true, count: updated.length });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to delete session' });
+    }
+  });
+
+  apiRouter.delete('/sessions/ping', (_req: Request, res: Response) => {
+    try {
+      clearSessions();
+      res.json({ success: true, count: 0 });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to clear sessions' });
+    }
+  });
+
   // Push Mode Agent Ingestion Routes
   const agentRouter = express.Router();
   agentRouter.get('/poll', healthRateLimiter, agentPoll);
@@ -854,7 +900,8 @@ export function createApiApp(): Application {
       req.path.startsWith('/auth') ||
       req.path.startsWith('/health') ||
       req.path.startsWith('/agent') ||
-      req.path.startsWith('/alerts')
+      req.path.startsWith('/alerts') ||
+      req.path.startsWith('/sessions')
     ) {
       return apiRouter(req, res, next);
     }
