@@ -149,7 +149,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
             Multi-Region Ping Monitor
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl font-normal leading-relaxed">
-            Concurrent round-trip latency and packet loss benchmarking to Google DNS (8.8.8.8) dispatched across   
+            Concurrent round-trip latency and packet loss benchmarking to Google DNS (8.8.8.8) dispatched across <br></br> 
             <strong className="text-cyan-300"> IN-DC01</strong>, <strong className="text-blue-300">IN-DC02</strong>, <strong className="text-emerald-300">LK-DC01</strong>, and <strong className="text-indigo-300">SG-DC01</strong>.
           </p>
         </div>
