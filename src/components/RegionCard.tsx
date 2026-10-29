@@ -100,6 +100,13 @@ export const RegionCard: React.FC<RegionCardProps> = ({
 
   const badgeConfig = getCountryBadgeStyle(meta.countryCode, result.regionId);
 
+  const REGIONAL_DC_NAMES: Record<string, string> = {
+    'IN-DC01': 'TATA data center',
+    'IN-DC02': 'ACT data center',
+    'LK-DC01': 'Srilanka data center',
+    'SG-DC01': 'Singapore data center',
+  };
+
   const deliveryPercent =
     hasResults && result.requestsSent && result.requestsSent > 0
       ? Math.max(0, Math.min(100, Math.round(((result.successfulReplies ?? 0) / result.requestsSent) * 100)))
@@ -110,10 +117,10 @@ export const RegionCard: React.FC<RegionCardProps> = ({
       className={`bg-[#141e33] hover:bg-[#18243c] rounded-2xl border border-slate-700/80 shadow-xl flex flex-col justify-between overflow-hidden transition-all duration-200 hover:border-slate-600 hover:shadow-cyan-900/10 ${badgeConfig.accentBorder}`}
     >
       <div className="p-5">
-        {/* Header: Country code badge (IN, IN, SL, SG) replacing flag */}
+        {/* Header: Country code badge (IN, IN, SL, SG) and Regional DC Identity */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            {/* Custom high-visibility country code badge */}
+            {/* Custom high-visibility country code badge: IN, IN, SL, SG */}
             <div
               className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center shrink-0 border font-mono font-black text-sm tracking-wider select-none ${badgeConfig.badgeClass}`}
             >
@@ -122,19 +129,11 @@ export const RegionCard: React.FC<RegionCardProps> = ({
             </div>
 
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-white text-base tracking-tight leading-tight truncate">
-                  {meta.serverCode}
-                </h3>
-                <span className="text-[11px] font-mono font-bold text-slate-300 bg-slate-800/90 px-2 py-0.5 rounded-md border border-slate-700">
-                  {badgeConfig.code} Node
-                </span>
-              </div>
-              <div className="text-xs text-cyan-200 font-semibold leading-tight mt-1 truncate">
-                {meta.fullName}
-              </div>
-              <div className="text-[11px] text-slate-300 font-medium mt-0.5 truncate">
-                {meta.provider}
+              <h3 className="font-black text-white text-lg tracking-tight leading-tight whitespace-nowrap">
+                {result.regionId}
+              </h3>
+              <div className="text-xs text-cyan-300 font-semibold leading-tight mt-1">
+                {REGIONAL_DC_NAMES[result.regionId] || meta.fullName}
               </div>
             </div>
           </div>
