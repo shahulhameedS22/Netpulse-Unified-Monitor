@@ -657,7 +657,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
                         <span className="text-blue-300 font-bold">
                           UL: {sess.summary?.avgUploadMbps ? `${sess.summary.avgUploadMbps.toFixed(1)}M` : '—'}
                         </span>
-                        <span className="text-slate-300">
+                        <span className="text-yellow-300-bold">
                           Ping: {sess.summary?.avgPingMs ? `${sess.summary.avgPingMs.toFixed(0)}ms` : '—'}
                         </span>
                       </div>
