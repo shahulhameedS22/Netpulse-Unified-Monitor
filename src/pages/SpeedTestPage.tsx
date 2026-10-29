@@ -739,7 +739,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
         <div className="flex items-center justify-between pb-2 border-b border-slate-800">
           <div>
             <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight">
-              Regional Speed Results (2×2 Grid)
+              Regional Speed Results
             </h2>
             <p className="text-xs text-slate-400">
               Dedicated benchmarks for IN-DC01, IN-DC02, LK-DC01, and SG-DC01.
