@@ -94,7 +94,7 @@ export const UnifiedDashboardPage: React.FC<UnifiedDashboardPageProps> = ({
                 <Activity className="w-3.5 h-3.5" />
                 Network Operations Center
               </span>
-              <span className="text-slate-500">•</span>
+              <span className="text-slate-500"></span>
               <span className="text-xs font-mono font-semibold text-slate-300"></span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
