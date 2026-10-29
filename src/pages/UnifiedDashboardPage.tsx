@@ -95,7 +95,7 @@ export const UnifiedDashboardPage: React.FC<UnifiedDashboardPageProps> = ({
                 Network Operations Center
               </span>
               <span className="text-slate-500">•</span>
-              <span className="text-xs font-mono font-semibold text-slate-300">4 Regional Data Centers Active</span>
+              <span className="text-xs font-mono font-semibold text-slate-300"></span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
               Unified Infrastructure Monitoring
