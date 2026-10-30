@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   type RegionId,
   type RegionPingResult,
@@ -29,8 +29,6 @@ import {
   Clock,
   History,
   ChevronRight,
-  ChevronDown,
-  Gauge,
 } from 'lucide-react';
 
 import {
@@ -44,19 +42,9 @@ import {
 
 interface PingMonitorPageProps {
   onTestRunningChange?: (running: boolean) => void;
-  onSwitchToSpeedTest?: () => void;
-  disableFloatingAnimation?: boolean;
-  hasTestedSpeedBefore?: boolean;
-  onPingCompleted?: () => void;
 }
 
-export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
-  onTestRunningChange,
-  onSwitchToSpeedTest,
-  disableFloatingAnimation = false,
-  hasTestedSpeedBefore = false,
-  onPingCompleted,
-}) => {
+export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningChange }) => {
   const [regionalResults, setRegionalResults] = useState<Record<RegionId, RegionPingResult>>(() =>
     createInitialRegionalResults('8.8.8.8')
   );
@@ -72,66 +60,23 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
   const [selectedDetailSession, setSelectedDetailSession] = useState<PingSession | null>(null);
   const [historySessions, setHistorySessions] = useState<PingSession[]>(() => loadStoredPingSessions());
   const [showHistory, setShowHistory] = useState(false);
-  const [hasJustFinishedRun, setHasJustFinishedRun] = useState(false);
-  const [hasCompletedAnyRun, setHasCompletedAnyRun] = useState(false);
-  const [showFloatingPrompt, setShowFloatingPrompt] = useState(false);
 
-  const bottomCtaRef = useRef<HTMLDivElement>(null);
-  const historySectionRef = useRef<HTMLDivElement>(null);
   const isRunning = isRunningAll || singleRunningId !== null;
 
   useEffect(() => {
     onTestRunningChange?.(isRunning);
   }, [isRunning, onTestRunningChange]);
 
-  // Clean up on unmount or tab switch
-  useEffect(() => {
-    return () => {
-      setHasJustFinishedRun(false);
-      setShowFloatingPrompt(false);
-    };
-  }, []);
-
-  // When user reaches bottom CTA or scrolls down, dismiss the floating prompt
-  useEffect(() => {
-    if (!showFloatingPrompt || !bottomCtaRef.current) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            setShowFloatingPrompt(false);
-          }
-        });
-      },
-      { threshold: 0.15 }
-    );
-    observer.observe(bottomCtaRef.current);
-    return () => observer.disconnect();
-  }, [showFloatingPrompt]);
-
-  const handleFloatingClick = () => {
-    setShowFloatingPrompt(false);
-    bottomCtaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
-
-  const handleToggleHistory = () => {
-    if (!showHistory) {
-      setShowHistory(true);
-      setTimeout(() => {
-        historySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 60);
-    } else {
-      historySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
-  // Load persistent sessions for history drawer only; do NOT pre-populate live test summary on initial load
+  // Load persistent sessions from server API & Firestore across page refreshes and copied links
   useEffect(() => {
     let isMounted = true;
     loadAllPingSessions().then((sessions) => {
       if (!isMounted) return;
       if (sessions && sessions.length > 0) {
         setHistorySessions(sessions);
+        // If current session has not run a test yet, populate summary and last session time
+        setSessionSummary((current) => current || sessions[0].summary || null);
+        setLastSessionTime((currentTime) => currentTime || sessions[0].completedAt || sessions[0].startedAt);
       }
     });
     return () => {
@@ -142,8 +87,6 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
   const handleRunAll = async () => {
     if (isRunning) return;
 
-    setHasJustFinishedRun(false);
-    setShowFloatingPrompt(false);
     setIsRunningAll(true);
     try {
       const session = await executePingSession({
@@ -157,10 +100,6 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
       setRegionalResults(session.regions);
       setSessionSummary(session.summary);
       setLastSessionTime(session.completedAt || new Date().toISOString());
-      setHasCompletedAnyRun(true);
-      setHasJustFinishedRun(true);
-      setShowFloatingPrompt(true);
-      onPingCompleted?.();
 
       // Save session across LocalStorage, server API, and Firestore
       persistPingSession(session).then((updated) => {
@@ -174,7 +113,6 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
   };
 
   const handleRunSingle = async (regionId: string) => {
-    setShowFloatingPrompt(false);
     const rid = regionId as RegionId;
     if (isRunning) return;
 
@@ -198,9 +136,6 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
 
       setRegionalResults((prev) => ({ ...prev, [rid]: result }));
       setLastSessionTime(result.completedAt || new Date().toISOString());
-      setHasCompletedAnyRun(true);
-      setHasJustFinishedRun(true);
-      onPingCompleted?.();
     } catch (err: any) {
       const ep = UNIFIED_ENDPOINTS.find((e) => e.serverCode === rid);
       const isMissingConfig = (err.message || '').includes('not configured');
@@ -226,9 +161,6 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
           packets: [],
         },
       }));
-      setHasCompletedAnyRun(true);
-      setHasJustFinishedRun(true);
-      onPingCompleted?.();
     } finally {
       setSingleRunningId(null);
     }
@@ -250,15 +182,14 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
             Multi-Region Ping Monitor
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl font-normal leading-relaxed">
-            Concurrent round-trip latency and packet loss benchmarking to Google DNS (8.8.8.8) dispatched across authorized data centers:<br />
-            <strong className="text-cyan-300"> IN-DC01 (TATA Node)</strong> and <strong className="text-blue-300">IN-DC02 (ACT Node)</strong>
-            <span className="text-slate-400"> (Authorized on Vercel deployment)</span>.
+            Concurrent round-trip latency and packet loss benchmarking to Google DNS (8.8.8.8) dispatched across <br /> 
+            <strong className="text-cyan-300"> IN-DC01</strong>, <strong className="text-blue-300">IN-DC02</strong>, <strong className="text-emerald-300">LK-DC01</strong>, and <strong className="text-indigo-300">SG-DC01</strong>.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+        <div className="flex items-center gap-2 self-start md:self-auto">
           <button
-            onClick={handleToggleHistory}
+            onClick={() => setShowHistory(!showHistory)}
             type="button"
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
               showHistory
@@ -284,15 +215,15 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
                 Active Probes
               </span>
               <span className="text-xs font-mono font-semibold text-slate-300">
-                Target: 8.8.8.8 (Google DNS) • 30 Packets • {UNIFIED_ENDPOINTS.length} Permitted Nodes
+                Target: 8.8.8.8 (Google DNS) • 30 Packets
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
               {isRunningAll
-                ? `Dispatching ICMP Probes across ${UNIFIED_ENDPOINTS.length} Permitted Regions...`
+                ? 'Dispatching ICMP Probes across 4 Regions...'
                 : singleRunningId
                 ? `Testing ${singleRunningId}...`
-                : `Execute Latency Benchmark (${UNIFIED_ENDPOINTS.map((e) => e.serverCode).join(' & ')})`}
+                : 'Execute Multi-Region Latency Benchmark'}
             </h2>
             <p className="text-xs text-slate-300 leading-relaxed font-normal">
               Dispatches native ping process execution through regional endpoints and push agents.
@@ -309,12 +240,12 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
               {isRunningAll ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Probing Permitted Regions...</span>
+                  <span>Probing All Regions...</span>
                 </>
               ) : (
                 <>
                   <Play className="w-5 h-5 fill-white" />
-                  <span>Run Ping ({UNIFIED_ENDPOINTS.map((e) => e.serverCode).join(' & ')})</span>
+                  <span>Run Ping (All 4 Regions)</span>
                 </>
               )}
             </button>
@@ -331,11 +262,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
 
       {/* History Drawer (if open) with clear Date & Time and Details button */}
       {showHistory && (
-        <section
-          id="session-history"
-          ref={historySectionRef}
-          className="bg-[#141e33] border border-indigo-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl"
-        >
+        <section className="bg-[#141e33] border border-indigo-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
           <div className="flex items-center justify-between pb-3 border-b border-slate-700 flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
               <History className="w-4 h-4 text-cyan-400" />
@@ -442,123 +369,35 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
         </section>
       )}
 
-      {/* Permitted Regional Ping Cards */}
+      {/* 4 Regional Ping Cards */}
       <section className="space-y-4">
         <div className="flex items-center justify-between pb-2 border-b border-slate-800">
           <div>
             <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight">
-              Permitted Regional ICMP Telemetry
+              Regional ICMP Telemetry
             </h2>
             <p className="text-xs text-slate-400">
               Live round-trip metrics to 8.8.8.8. Click &quot;Packets&quot; to inspect individual sequences.
             </p>
           </div>
-          <span className="text-xs font-mono font-bold text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded-full border border-cyan-500/30">
-            {UNIFIED_ENDPOINTS.length} Permitted Nodes Active
+          <span className="text-xs font-mono text-slate-400">
+            4 Nodes Active
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {UNIFIED_ENDPOINTS.map((endpoint) => {
-            const rid = endpoint.serverCode as RegionId;
-            return (
-              <RegionCard
-                key={rid}
-                result={regionalResults[rid]}
-                totalPlannedCount={pingCount}
-                onInspectPackets={(res) => setInspectModalResult(res)}
-                onRunSingle={handleRunSingle}
-                isRunning={singleRunningId === rid}
-              />
-            );
-          })}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {(['IN-DC01', 'IN-DC02', 'LK-DC01', 'SG-DC01'] as RegionId[]).map((rid) => (
+            <RegionCard
+              key={rid}
+              result={regionalResults[rid]}
+              totalPlannedCount={pingCount}
+              onInspectPackets={(res) => setInspectModalResult(res)}
+              onRunSingle={handleRunSingle}
+              isRunning={singleRunningId === rid}
+            />
+          ))}
         </div>
       </section>
-
-      {/* Floating Animated Prompt to draw user down: short, cute, and disappears on click or at bottom */}
-      {!disableFloatingAnimation && showFloatingPrompt && !isRunning && onSwitchToSpeedTest && (
-        <div className="fixed bottom-6 right-6 z-40">
-          <button
-            onClick={handleFloatingClick}
-            type="button"
-            className="group flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-lg shadow-cyan-950/60 border border-cyan-400/40 cursor-pointer transition-transform hover:scale-105 active:scale-95"
-            title="Scroll to Next Benchmark"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
-            <span>Next Test</span>
-            <ChevronDown className="w-3.5 h-3.5 text-cyan-200 group-hover:translate-y-0.5 transition-transform animate-bounce" />
-          </button>
-        </div>
-      )}
-
-      {/* Bottom Completion Invitation: Next Step Recommendation (Clean without animations if second app test) */}
-      {(hasCompletedAnyRun || hasJustFinishedRun) && !isRunning && onSwitchToSpeedTest && (
-        <section
-          ref={bottomCtaRef}
-          className={`relative overflow-hidden rounded-3xl p-6 sm:p-8 bg-gradient-to-r from-slate-900 via-[#12233f] to-[#122e44] border-2 border-cyan-500/50 shadow-2xl shadow-cyan-950/60 ${disableFloatingAnimation ? '' : 'animate-fade-in'}`}
-        >
-          {/* Animated pulsing glow effects - only for first test */}
-          {!disableFloatingAnimation && (
-            <>
-              <div className="absolute -top-24 -right-24 w-80 h-80 bg-cyan-500/20 rounded-full blur-3xl pointer-events-none animate-pulse" />
-              <div className="absolute -bottom-24 -left-24 w-80 h-80 bg-blue-500/20 rounded-full blur-3xl pointer-events-none animate-pulse" />
-            </>
-          )}
-
-          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-            <div className="flex items-start gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-400 flex items-center justify-center shrink-0 shadow-lg shadow-cyan-500/20">
-                <Gauge className={`w-7 h-7 text-cyan-300 ${disableFloatingAnimation ? '' : 'animate-pulse'}`} />
-              </div>
-              <div className="space-y-1.5 max-w-2xl">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
-                    <span className={`w-2 h-2 rounded-full bg-cyan-400 ${disableFloatingAnimation ? '' : 'animate-ping'} inline-block`} />
-                    {hasTestedSpeedBefore ? 'Speed Test Completed' : 'Recommended Next Benchmark'}
-                  </span>
-                  <span className="text-xs text-slate-400">
-                    {hasTestedSpeedBefore ? '• Want to test again?' : '• Bandwidth & Throughput Audit'}
-                  </span>
-                </div>
-                <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                  {hasTestedSpeedBefore
-                    ? 'Want to test Speed & Bandwidth again?'
-                    : 'Ping Probes Complete! Want to measure Speed & Bandwidth next?'}
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                  {hasTestedSpeedBefore
-                    ? "You previously completed a speed test in this session. Want to run the Speed Test again to compare live download/upload megabits per second and pipeline latency?"
-                    : 'You’ve benchmarked ICMP round-trip latency and packet loss across all 4 regions. Next, evaluate actual real-time download/upload megabits per second and pipeline latency using the Multi-Region Speed Test.'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
-              <button
-                onClick={() => {
-                  setHasJustFinishedRun(false);
-                  onSwitchToSpeedTest?.();
-                }}
-                type="button"
-                className="group inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl text-sm font-black text-white bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 border border-cyan-400/40 shadow-xl shadow-cyan-600/30 hover:shadow-cyan-600/50 hover:scale-[1.03] active:scale-[0.98] transition-all cursor-pointer"
-              >
-                {hasTestedSpeedBefore ? (
-                  <>
-                    <RotateCcw className="w-4 h-4 text-white group-hover:-rotate-90 transition-transform" />
-                    <span>Run Speed Test Again</span>
-                  </>
-                ) : (
-                  <>
-                    <Gauge className="w-4 h-4 text-white group-hover:rotate-12 transition-transform" />
-                    <span>Launch Speed Test App</span>
-                  </>
-                )}
-                <ChevronRight className="w-4 h-4 text-white group-hover:translate-x-1 transition-transform" />
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
 
       {/* Packet Inspection Modal */}
       <PacketInspectionModal
