@@ -31,10 +31,10 @@ export const Navigation: React.FC<NavigationProps> = ({
   const { user, profile, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
-  const navItems = [
+  const allNavItems = [
     {
       id: 'dashboard' as NavTab,
-      label: 'NOC Dashboard',
+      label: 'Dashboard',
       icon: LayoutDashboard,
       badge: null,
     },
@@ -60,6 +60,21 @@ export const Navigation: React.FC<NavigationProps> = ({
       badgeColor: 'bg-slate-800 text-slate-400 border-slate-700',
     },
   ];
+
+  // Dynamic tabs: Dashboard & Regional Nodes always present;
+  // Speed Test or Ping Monitoring only shows when currently launched.
+  const navItems = allNavItems.filter((item) => {
+    if (item.id === 'dashboard' || item.id === 'endpoints') {
+      return true;
+    }
+    if (currentTab === 'speedtest' && item.id === 'speedtest') {
+      return true;
+    }
+    if (currentTab === 'ping' && item.id === 'ping') {
+      return true;
+    }
+    return false;
+  });
 
   const handleSelect = (tab: NavTab) => {
     onSelectTab(tab);
@@ -97,6 +112,7 @@ export const Navigation: React.FC<NavigationProps> = ({
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentTab === item.id;
+
               return (
                 <button
                   key={item.id}
@@ -175,7 +191,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   type="button"
                   className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold ${
                     isActive
-                      ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
+                      ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold'
                       : 'text-slate-300 hover:text-white hover:bg-slate-900 border border-transparent'
                   }`}
                 >
