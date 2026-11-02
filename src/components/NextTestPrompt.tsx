@@ -21,6 +21,8 @@ const COPY = {
   ping: {
     title: 'Want to check latency as well?',
     text: 'Your speed test is finished. Run the Ping Monitor to probe packet loss and latency from all four regions.',
+    againTitle: 'Want to test again?',
+    againText: 'This test is complete. Launch the Ping Monitor to run another latency and packet loss check.',
     button: 'Launch Ping Monitoring App',
     pill: 'Next: Ping Monitoring',
     Icon: Radio,
@@ -34,6 +36,8 @@ const COPY = {
   speedtest: {
     title: 'Want to measure real speed as well?',
     text: 'Your ping check is finished. Run the Speed Test to measure download, upload and jitter for all four regions.',
+    againTitle: 'Want to test again?',
+    againText: 'This test is complete. Launch the Speed Test to run another download, upload and jitter check.',
     button: 'Launch Speed Test App',
     pill: 'Next: Speed Test',
     Icon: Gauge,
@@ -49,9 +53,11 @@ const COPY = {
  * Shown at the bottom of an app page ONLY after a test has finished in that app.
  *
  * - First completed test of the visit: animated (slide-up, glowing ring, nudging
- *   arrow) plus a floating bouncing pill that pulls the user down the page.
- * - Every later completed test in the same visit: plain card + launch button,
- *   no animation.
+ *   arrow) plus a floating bouncing pill that pulls the user down the page. The pill
+ *   stays only until the user reaches the card (by clicking it or scrolling down);
+ *   after that it is gone for good, even if the user scrolls back up.
+ * - Every later completed test in the same visit: plain "Want to test again?" card
+ *   + launch button, no animation.
  */
 export const NextTestPrompt: React.FC<NextTestPromptProps> = ({
   target,
@@ -63,23 +69,27 @@ export const NextTestPrompt: React.FC<NextTestPromptProps> = ({
   // "used" later must not switch it off halfway through.
   const [animate] = useState(() => !animationAlreadyUsed);
   const cardRef = useRef<HTMLDivElement>(null);
-  const [cardVisible, setCardVisible] = useState(false);
+  // Becomes true the first time the user reaches the card (scroll or pill click)
+  // and never goes back to false, so the floating pill can never come back.
+  const [reached, setReached] = useState(false);
 
   useEffect(() => {
     onShown();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Hide the floating pill as soon as the card itself is on screen.
+  // Watch for the user reaching the card. After the first time, stop watching.
   useEffect(() => {
-    if (!animate || !cardRef.current) return;
+    if (!animate || reached || !cardRef.current) return;
     const observer = new IntersectionObserver(
-      ([entry]) => setCardVisible(entry.isIntersecting),
+      ([entry]) => {
+        if (entry.isIntersecting) setReached(true);
+      },
       { threshold: 0.35 }
     );
     observer.observe(cardRef.current);
     return () => observer.disconnect();
-  }, [animate]);
+  }, [animate, reached]);
 
   const copy = COPY[target];
   const Icon = copy.Icon;
@@ -101,10 +111,12 @@ export const NextTestPrompt: React.FC<NextTestPromptProps> = ({
             </div>
             <div>
               <h3 className="text-lg font-black text-white flex items-center gap-2">
-                {copy.title}
-                {animate && <Sparkles className="w-4 h-4 text-amber-300" />}
+                {animate ? copy.title : copy.againTitle}
+                {animate && !reached && <Sparkles className="w-4 h-4 text-amber-300" />}
               </h3>
-              <p className="text-xs sm:text-sm text-slate-300 mt-1 leading-relaxed">{copy.text}</p>
+              <p className="text-xs sm:text-sm text-slate-300 mt-1 leading-relaxed">
+                {animate ? copy.text : copy.againText}
+              </p>
             </div>
           </div>
 
@@ -117,19 +129,22 @@ export const NextTestPrompt: React.FC<NextTestPromptProps> = ({
             className={`shrink-0 inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-extrabold text-sm text-white shadow-lg transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] ${copy.accent.button}`}
           >
             <span>{copy.button}</span>
-            <ArrowRight className={`w-4 h-4 ${animate ? 'np-arrow-nudge' : ''}`} />
+            <ArrowRight className={`w-4 h-4 ${animate && !reached ? 'np-arrow-nudge' : ''}`} />
           </button>
         </div>
       </div>
 
       {/* Floating cue, first completed test only. Rendered in <body> so no parent
-          transform can break position:fixed. Disappears once the card is in view. */}
+          transform can break position:fixed. Gone for good once the user reaches the card. */}
       {animate &&
-        !cardVisible &&
+        !reached &&
         createPortal(
           <button
             type="button"
-            onClick={() => cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            onClick={() => {
+              setReached(true);
+              cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }}
             className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 cursor-pointer"
             aria-label={`Scroll down: ${copy.pill}`}
           >
