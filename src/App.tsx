@@ -3,7 +3,7 @@
  * Combines Network Speed Test & Ping Monitoring into a single secure platform.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { Navigation, NavTab } from './components/Navigation';
@@ -18,6 +18,12 @@ const MainAppContent: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [speedTestRunning, setSpeedTestRunning] = useState(false);
   const [pingTestRunning, setPingTestRunning] = useState(false);
+
+  // "Next test" attention animation: plays only for the FIRST completed test of a
+  // visit, whichever app it was in. Held in memory only (not localStorage), so a
+  // refresh, closing the tab or leaving the site makes it play once again.
+  const [nextStepAnimationUsed, setNextStepAnimationUsed] = useState(false);
+  const markNextStepAnimationUsed = useCallback(() => setNextStepAnimationUsed(true), []);
 
   // Loading screen while verifying persistent session
   if (loading) {
@@ -67,12 +73,18 @@ const MainAppContent: React.FC = () => {
         {currentTab === 'speedtest' && (
           <SpeedTestPage
             onTestRunningChange={setSpeedTestRunning}
+            onSelectTab={setCurrentTab}
+            nextStepAnimationUsed={nextStepAnimationUsed}
+            onNextStepShown={markNextStepAnimationUsed}
           />
         )}
 
         {currentTab === 'ping' && (
           <PingMonitorPage
             onTestRunningChange={setPingTestRunning}
+            onSelectTab={setCurrentTab}
+            nextStepAnimationUsed={nextStepAnimationUsed}
+            onNextStepShown={markNextStepAnimationUsed}
           />
         )}
 
