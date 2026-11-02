@@ -28,12 +28,22 @@ import {
   formatSessionDateTime,
 } from '../services/speedHistoryStorage';
 import { SpeedSessionDetailModal } from '../components/SpeedSessionDetailModal';
+import { NextTestPrompt } from '../components/NextTestPrompt';
+import { NavTab } from '../components/Navigation';
 
 interface SpeedTestPageProps {
   onTestRunningChange?: (running: boolean) => void;
+  onSelectTab: (tab: NavTab) => void;
+  nextStepAnimationUsed: boolean;
+  onNextStepShown: () => void;
 }
 
-export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChange }) => {
+export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
+  onTestRunningChange,
+  onSelectTab,
+  nextStepAnimationUsed,
+  onNextStepShown,
+}) => {
   const [regionStates, setRegionStates] = useState<RegionState[]>(() =>
     UNIFIED_ENDPOINTS.map((endpoint) => ({
       endpoint,
@@ -761,6 +771,16 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({ onTestRunningChang
           ))}
         </div>
       </section>
+
+      {/* Next test prompt: only after a test finished on THIS page in this visit */}
+      {hasCompletedRun && !isSequenceRunning && (
+        <NextTestPrompt
+          target="ping"
+          onLaunch={onSelectTab}
+          animationAlreadyUsed={nextStepAnimationUsed}
+          onShown={onNextStepShown}
+        />
+      )}
 
       {/* Speed Test Session Details Modal */}
       <SpeedSessionDetailModal
