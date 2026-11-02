@@ -15,6 +15,8 @@ import { SummaryCards } from '../components/SummaryCards';
 import { RegionCard } from '../components/RegionCard';
 import { PacketInspectionModal } from '../components/PacketInspectionModal';
 import { SessionDetailModal } from '../components/SessionDetailModal';
+import { NextTestPrompt } from '../components/NextTestPrompt';
+import { NavTab } from '../components/Navigation';
 import {
   Play,
   RotateCcw,
@@ -42,9 +44,17 @@ import {
 
 interface PingMonitorPageProps {
   onTestRunningChange?: (running: boolean) => void;
+  onSelectTab: (tab: NavTab) => void;
+  nextStepAnimationUsed: boolean;
+  onNextStepShown: () => void;
 }
 
-export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningChange }) => {
+export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
+  onTestRunningChange,
+  onSelectTab,
+  nextStepAnimationUsed,
+  onNextStepShown,
+}) => {
   const [regionalResults, setRegionalResults] = useState<Record<RegionId, RegionPingResult>>(() =>
     createInitialRegionalResults('8.8.8.8')
   );
@@ -54,6 +64,8 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
   const [lastSessionTime, setLastSessionTime] = useState<string | null>(null);
   const [targetIp, setTargetIp] = useState('8.8.8.8');
   const [pingCount, setPingCount] = useState(30);
+  // True only after a test finished on this page in this visit (never from saved history).
+  const [finishedThisVisit, setFinishedThisVisit] = useState(false);
 
   // Modals & Storage
   const [inspectModalResult, setInspectModalResult] = useState<RegionPingResult | null>(null);
@@ -88,6 +100,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
     if (isRunning) return;
 
     setIsRunningAll(true);
+    setFinishedThisVisit(false);
     try {
       const session = await executePingSession({
         targetIp,
@@ -100,6 +113,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
       setRegionalResults(session.regions);
       setSessionSummary(session.summary);
       setLastSessionTime(session.completedAt || new Date().toISOString());
+      setFinishedThisVisit(true);
 
       // Save session across LocalStorage, server API, and Firestore
       persistPingSession(session).then((updated) => {
@@ -117,6 +131,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
     if (isRunning) return;
 
     setSingleRunningId(rid);
+    setFinishedThisVisit(false);
     setRegionalResults((prev) => ({
       ...prev,
       [rid]: {
@@ -136,6 +151,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
 
       setRegionalResults((prev) => ({ ...prev, [rid]: result }));
       setLastSessionTime(result.completedAt || new Date().toISOString());
+      setFinishedThisVisit(true);
     } catch (err: any) {
       const ep = UNIFIED_ENDPOINTS.find((e) => e.serverCode === rid);
       const isMissingConfig = (err.message || '').includes('not configured');
@@ -398,6 +414,16 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({ onTestRunningC
           ))}
         </div>
       </section>
+
+      {/* Next test prompt: only after a test finished on THIS page in this visit */}
+      {finishedThisVisit && !isRunning && (
+        <NextTestPrompt
+          target="speedtest"
+          onLaunch={onSelectTab}
+          animationAlreadyUsed={nextStepAnimationUsed}
+          onShown={onNextStepShown}
+        />
+      )}
 
       {/* Packet Inspection Modal */}
       <PacketInspectionModal
