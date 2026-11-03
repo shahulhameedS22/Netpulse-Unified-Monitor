@@ -6,6 +6,10 @@
  * 2. Firestore Cloud Backup: Syncs to cloud database for authenticated NOC operators.
  * 3. Client LocalStorage Cache: Provides instant zero-latency UI rendering and offline fallback.
  *
+ * Deleting a session (or clearing the history) removes it from ALL three layers. If one layer cannot be
+ * cleared, the functions below throw an error instead of pretending it worked, because the sessions that
+ * remain would come back after a refresh.
+ *
  * Designed to be 100% free with minimal storage footprint.
  */
 
@@ -14,8 +18,29 @@ import { db, auth } from '../lib/firebase';
 import { doc, setDoc, deleteDoc, getDocs, collection, query, orderBy, limit } from 'firebase/firestore';
 
 const STORAGE_KEY = 'noc_ping_sessions_history_v1';
+const SERVER_URL = '/api/sessions/ping';
+const FIRESTORE_COLLECTION = 'ping_sessions';
 const MAX_STORED_SESSIONS = 100;
 const MAX_DETAILED_PACKETS_SESSIONS = 15;
+
+/**
+ * Writes that are still in flight (server / Firestore). Clearing waits for them, so a session that was
+ * saved a moment before "Clear All" cannot arrive afterwards and reappear.
+ */
+const pendingWrites = new Set<Promise<unknown>>();
+function trackWrite<T>(p: Promise<T>): Promise<T> {
+  pendingWrites.add(p);
+  const done = () => {
+    pendingWrites.delete(p);
+  };
+  p.then(done, done);
+  return p;
+}
+async function waitForPendingWrites(): Promise<void> {
+  if (pendingWrites.size > 0) {
+    await Promise.allSettled([...pendingWrites]);
+  }
+}
 
 /**
  * Strips verbose packet arrays from older sessions to keep storage ultra-lightweight and free
@@ -101,7 +126,7 @@ function mergeSessions(primary: PingSession[], secondary: PingSession[]): PingSe
  */
 export async function fetchServerPingSessions(): Promise<PingSession[]> {
   try {
-    const res = await fetch('/api/sessions/ping', {
+    const res = await fetch(SERVER_URL, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(5000),
     });
@@ -123,7 +148,7 @@ export async function fetchServerPingSessions(): Promise<PingSession[]> {
 export async function fetchFirestorePingSessions(): Promise<PingSession[]> {
   try {
     if (!auth.currentUser) return [];
-    const q = query(collection(db, 'ping_sessions'), orderBy('startedAt', 'desc'), limit(50));
+    const q = query(collection(db, FIRESTORE_COLLECTION), orderBy('startedAt', 'desc'), limit(50));
     const snap = await getDocs(q);
     const sessions: PingSession[] = [];
     snap.forEach((docSnap) => {
@@ -173,19 +198,21 @@ export async function persistPingSession(newSession: PingSession): Promise<PingS
   const updatedLocal = mergeSessions([newSession], currentLocal);
   saveToLocalStorage(updatedLocal);
 
-  // 2. Server API update (fire-and-forget / non-blocking)
-  fetch('/api/sessions/ping', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: newSession }),
-  }).catch((err) => {
-    console.warn('[SessionStorage] Failed to push session to server API:', err);
-  });
+  // 2. Server API update (non-blocking, but tracked so that "Clear All" waits for it)
+  trackWrite(
+    fetch(SERVER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: newSession }),
+    }).catch((err) => {
+      console.warn('[SessionStorage] Failed to push session to server API:', err);
+    })
+  );
 
   // 3. Firestore update if authenticated
   if (auth.currentUser) {
     try {
-      const sessionDocRef = doc(db, 'ping_sessions', newSession.id);
+      const sessionDocRef = doc(db, FIRESTORE_COLLECTION, newSession.id);
       // Clean payload for Firestore
       const firestorePayload = {
         id: newSession.id,
@@ -196,9 +223,11 @@ export async function persistPingSession(newSession: PingSession): Promise<PingS
         regions: newSession.regions || {},
         summary: newSession.summary || null,
       };
-      setDoc(sessionDocRef, firestorePayload).catch((err) => {
-        console.warn('[SessionStorage] Firestore doc write skipped:', err);
-      });
+      trackWrite(
+        setDoc(sessionDocRef, firestorePayload).catch((err) => {
+          console.warn('[SessionStorage] Firestore doc write skipped:', err);
+        })
+      );
     } catch (err) {
       console.warn('[SessionStorage] Firestore sync error:', err);
     }
@@ -207,43 +236,109 @@ export async function persistPingSession(newSession: PingSession): Promise<PingS
   return updatedLocal;
 }
 
+/* ------------------------------------------------------------------ */
+/* Deleting                                                             */
+/* ------------------------------------------------------------------ */
+
+/** Server delete. "No such route" (404/405) means this deployment has no server store, which is fine. */
+async function deleteOnServer(url: string): Promise<void> {
+  try {
+    const res = await fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(8000) });
+    if (res.ok || res.status === 404 || res.status === 405) return;
+    throw new Error(`the server answered HTTP ${res.status}`);
+  } catch (err: any) {
+    // Server unreachable: nothing could have been loaded from it either, so it is not a reason to fail.
+    if (err instanceof TypeError || err?.name === 'AbortError' || err?.name === 'TimeoutError') return;
+    throw err;
+  }
+}
+
+function describeFirestoreError(err: any): string {
+  if (err?.code === 'permission-denied') {
+    return 'Firebase refused the delete (permission denied). Publish the latest firestore.rules in the Firebase Console.';
+  }
+  return err?.message || String(err);
+}
+
+/** Deletes every document of a Firestore collection, in small rounds, and checks that nothing is left. */
+async function deleteAllFirestoreDocs(collectionName: string): Promise<void> {
+  for (let round = 0; round < 50; round++) {
+    const snap = await getDocs(query(collection(db, collectionName), limit(100)));
+    if (snap.empty) return;
+    const results = await Promise.allSettled(snap.docs.map((d) => deleteDoc(d.ref)));
+    const deleted = results.filter((r) => r.status === 'fulfilled').length;
+    if (deleted === 0) {
+      const firstError = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+      throw new Error(describeFirestoreError(firstError?.reason));
+    }
+  }
+  const left = await getDocs(query(collection(db, collectionName), limit(1)));
+  if (!left.empty) throw new Error('some sessions could not be deleted from Firestore');
+}
+
 /**
- * Delete a session across LocalStorage, Server API, and Firestore
+ * Delete a session across LocalStorage, Server API, and Firestore.
+ * Throws if it could not be removed everywhere (the caller should then keep showing it).
  */
 export async function removePingSession(sessionId: string): Promise<PingSession[]> {
-  const current = loadStoredPingSessions();
-  const updated = current.filter((s) => s.id !== sessionId);
-  saveToLocalStorage(updated);
+  await waitForPendingWrites();
+  const problems: string[] = [];
 
-  // Server delete
-  fetch(`/api/sessions/ping/${encodeURIComponent(sessionId)}`, {
-    method: 'DELETE',
-  }).catch(() => {});
-
-  // Firestore delete if authenticated
-  if (auth.currentUser) {
-    try {
-      deleteDoc(doc(db, 'ping_sessions', sessionId)).catch(() => {});
-    } catch {}
+  try {
+    await deleteOnServer(`${SERVER_URL}/${encodeURIComponent(sessionId)}`);
+  } catch (err: any) {
+    problems.push(`server: ${err?.message || err}`);
   }
 
+  if (auth.currentUser) {
+    try {
+      await deleteDoc(doc(db, FIRESTORE_COLLECTION, sessionId));
+    } catch (err: any) {
+      problems.push(describeFirestoreError(err));
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`The session could not be deleted everywhere (${problems.join('; ')}).`);
+  }
+
+  const updated = loadStoredPingSessions().filter((s) => s.id !== sessionId);
+  saveToLocalStorage(updated);
   return updated;
 }
 
 /**
- * Clear all sessions across LocalStorage, Server API, and Firestore
+ * Clear all sessions across LocalStorage, Server API, and Firestore.
+ * Throws if something could not be cleared (the sessions that remain would come back after a refresh).
  */
 export async function clearAllPingSessions(): Promise<void> {
+  await waitForPendingWrites();
+  const problems: string[] = [];
+
+  try {
+    await deleteOnServer(SERVER_URL);
+  } catch (err: any) {
+    problems.push(`server: ${err?.message || err}`);
+  }
+
+  if (auth.currentUser) {
+    try {
+      await deleteAllFirestoreDocs(FIRESTORE_COLLECTION);
+    } catch (err: any) {
+      problems.push(describeFirestoreError(err));
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`The session history could not be fully cleared (${problems.join('; ')}).`);
+  }
+
+  // Only when everything remote is gone: clear the local cache too.
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {}
   }
-
-  // Server clear
-  fetch('/api/sessions/ping', {
-    method: 'DELETE',
-  }).catch(() => {});
 }
 
 export interface FormattedDateTime {
