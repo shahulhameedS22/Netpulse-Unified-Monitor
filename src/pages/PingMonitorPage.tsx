@@ -79,16 +79,15 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
     onTestRunningChange?.(isRunning);
   }, [isRunning, onTestRunningChange]);
 
-  // Load persistent sessions from server API & Firestore across page refreshes and copied links
+  // Load saved sessions from the server API & Firestore for the Session History panel ONLY.
+  // Saved results must NOT fill the summary cards: those show results only after a test has
+  // finished on this page in this visit (see handleRunAll).
   useEffect(() => {
     let isMounted = true;
     loadAllPingSessions().then((sessions) => {
       if (!isMounted) return;
       if (sessions && sessions.length > 0) {
         setHistorySessions(sessions);
-        // If current session has not run a test yet, populate summary and last session time
-        setSessionSummary((current) => current || sessions[0].summary || null);
-        setLastSessionTime((currentTime) => currentTime || sessions[0].completedAt || sessions[0].startedAt);
       }
     });
     return () => {
@@ -101,6 +100,9 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
 
     setIsRunningAll(true);
     setFinishedThisVisit(false);
+    // Clear the previous summary so the cards only show results of the test that just finished
+    setSessionSummary(null);
+    setLastSessionTime(null);
     try {
       const session = await executePingSession({
         targetIp,
