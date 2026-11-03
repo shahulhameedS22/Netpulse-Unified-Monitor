@@ -6,22 +6,15 @@
  * 2. Speed Test Relay API (/api/speedtest/relay streaming relay for LibreSpeed)
  * 3. Health & Regional Diagnostics (/api/health, /api/regions)
  * 4. Admin Account Verification (/api/auth/verify-admin-secret)
+ * 5. Timeout alerts: in-app flag on every result, e-mail for long runs of timeouts (./alerts.ts)
  */
 
 import express, { type Request, type Response, type NextFunction, type Application } from 'express';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { dispatchSpeedTestRoute } from './speedTestApi.ts';
-import {
-  getAllSessions,
-  addSession,
-  deleteSession,
-  clearSessions,
-  getAllSpeedSessions,
-  addSpeedSession,
-  deleteSpeedSession,
-  clearSpeedSessions,
-} from './sessionStore.ts';
+// NOTE: relative imports end in .js (not .ts): the Vercel function runs as an ES module and cannot load .ts files.
+import { dispatchSpeedTestRoute } from './speedTestApi.js';
+import { buildAlert, sendCriticalAlertEmail, registerAlertRoutes } from './alerts.js';
 
 dotenv.config();
 
@@ -313,11 +306,11 @@ const PK = {
   res: (r: string, id: string) => `ping:res:${r}:${id}`,
 };
 
+// A region is in push mode only when ITS OWN key AGENT_KEY_<REGION> is set.
+// (A shared fallback key was removed: it made every region look "online" and mapped every agent to the last region.)
 export function isPushRegion(regionId: string): regionId is RegionId {
   if (!(ALLOWED_REGIONS as readonly string[]).includes(regionId)) return false;
-  const specific = process.env[agentKeyEnvName(regionId as RegionId)]?.trim();
-  const fallback = process.env.AGENT_KEY?.trim();
-  return Boolean(specific || fallback);
+  return Boolean(process.env[agentKeyEnvName(regionId as RegionId)]?.trim());
 }
 
 function digestEqual(a: string, b: string): boolean {
@@ -333,7 +326,7 @@ function authAgent(req: Request): RegionId | null {
   if (!token) return null;
   let found: RegionId | null = null;
   for (const r of ALLOWED_REGIONS) {
-    const key = process.env[agentKeyEnvName(r)]?.trim() || process.env.AGENT_KEY?.trim();
+    const key = process.env[agentKeyEnvName(r)]?.trim();
     if (key && digestEqual(token, key)) found = r;
   }
   return found;
@@ -406,6 +399,60 @@ async function agentPoll(req: Request, res: Response): Promise<void> {
   }
 }
 
+const isNum = (v: unknown, min: number, max: number): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
+const numOrNull = (v: unknown) => v === null || isNum(v, 0, 60_000);
+
+/** Whitelist + range-check everything an agent sends. Returns the sanitized result or an error text. */
+function sanitizeAgentResult(body: any, region: RegionId): { ok: true; result: any } | { ok: false; error: string } {
+  if (!body || typeof body !== 'object') return { ok: false, error: 'Body must be a JSON object.' };
+  if (body.targetIp !== FIXED_TARGET_IP) return { ok: false, error: `targetIp must be ${FIXED_TARGET_IP}.` };
+  if (!Number.isInteger(body.requestsSent) || body.requestsSent < 1 || body.requestsSent > MAX_PING_COUNT)
+    return { ok: false, error: 'requestsSent must be an integer 1-30.' };
+  if (!Number.isInteger(body.successfulReplies) || body.successfulReplies < 0 || body.successfulReplies > body.requestsSent)
+    return { ok: false, error: 'successfulReplies must be an integer 0..requestsSent.' };
+  for (const f of ['minLatencyMs', 'avgLatencyMs', 'maxLatencyMs', 'jitterMs']) {
+    if (!numOrNull(body[f])) return { ok: false, error: `${f} must be null or a number 0-60000.` };
+  }
+  if (!isNum(body.executionDurationMs, 0, 300_000)) return { ok: false, error: 'executionDurationMs out of range.' };
+  if (!Array.isArray(body.packets) || body.packets.length > MAX_PING_COUNT) return { ok: false, error: 'packets must be an array (max 30).' };
+  const packets = [];
+  for (const p of body.packets) {
+    if (!p || !Number.isInteger(p.sequence) || p.sequence < 1 || p.sequence > 1000 || typeof p.success !== 'boolean' || !numOrNull(p.latencyMs ?? null))
+      return { ok: false, error: 'Invalid packet entry.' };
+    packets.push({
+      sequence: p.sequence,
+      latencyMs: p.latencyMs ?? null,
+      ...(Number.isInteger(p.ttl) && p.ttl >= 0 && p.ttl <= 255 ? { ttl: p.ttl } : {}),
+      success: p.success,
+    });
+  }
+  const sent = body.requestsSent as number;
+  const okCount = body.successfulReplies as number;
+  const failed = sent - okCount;
+  return {
+    ok: true,
+    result: {
+      success: body.success === true,
+      regionId: region, // decided by the agent's key, never by the body
+      targetIp: FIXED_TARGET_IP,
+      requestsSent: sent,
+      successfulReplies: okCount,
+      failedRequests: failed,
+      packetLossPercent: Math.round((failed / sent) * 1000) / 10,
+      minLatencyMs: body.minLatencyMs,
+      avgLatencyMs: body.avgLatencyMs,
+      maxLatencyMs: body.maxLatencyMs,
+      jitterMs: body.jitterMs,
+      packets,
+      executionDurationMs: body.executionDurationMs,
+      timestamp: new Date().toISOString(),
+      serverVersion: 'push-agent',
+      ...(typeof body.error === 'string' && body.error ? { error: body.error.slice(0, 200) } : {}),
+    },
+  };
+}
+
 async function agentIngest(req: Request, res: Response): Promise<void> {
   const region = authAgent(req);
   if (!region) {
@@ -417,16 +464,33 @@ async function agentIngest(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: 'Valid requestId is required.' });
     return;
   }
+  const clean = sanitizeAgentResult(req.body, region);
+  if (!clean.ok) {
+    res.status(400).json({ error: clean.error });
+    return;
+  }
   try {
+    // the result must belong to the test that is open for this region
+    const [raw] = await redisPipeline([['GET', PK.req(region)]]);
+    const rec = raw ? JSON.parse(raw) : null;
+    if (!rec || rec.requestId !== requestId) {
+      res.status(409).json({ error: 'No matching pending test request (expired or already completed).' });
+      return;
+    }
+    // Timeout alerts: any timeout is flagged for the dashboard; an e-mail goes out only for a long run of timeouts
+    const alert = buildAlert(clean.result);
+    if (alert.level === 'critical') alert.emailStatus = await sendCriticalAlertEmail(region, clean.result, alert);
+    clean.result.alert = alert;
     await redisPipeline([
-      ['SET', PK.res(region, requestId), JSON.stringify(req.body), 'EX', PUSH_RESULT_TTL_S],
+      ['SET', PK.res(region, requestId), JSON.stringify(clean.result), 'EX', PUSH_RESULT_TTL_S],
       ['DEL', PK.req(region)],
       ['SET', PK.cool(region), '1', 'EX', PUSH_COOLDOWN_S],
       ['SET', PK.seen(region), String(Date.now()), 'EX', PUSH_SEEN_TTL_S],
     ]);
     res.json({ ok: true });
   } catch (err: any) {
-    res.status(500).json({ ok: false, error: err.message || 'Ingest error' });
+    console.error('[ingest] storage error:', err?.message || err);
+    res.status(500).json({ ok: false, error: 'Result storage is temporarily unavailable.' });
   }
 }
 
@@ -451,6 +515,9 @@ export function createApiApp(): Application {
 
   const apiRouter = express.Router();
   apiRouter.use(authMiddleware);
+
+  // Timeout alerts: POST /api/alerts/test-email (administrator key required)
+  registerAlertRoutes(apiRouter);
 
   /**
    * Admin Account Setup Key Verification
@@ -844,96 +911,6 @@ export function createApiApp(): Application {
     }
   });
 
-  /**
-   * Ping Session History Endpoints (Cross-Device & Persistent)
-   */
-  apiRouter.get('/sessions/ping', (_req: Request, res: Response) => {
-    try {
-      const sessions = getAllSessions();
-      res.json({ success: true, count: sessions.length, sessions });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to get sessions' });
-    }
-  });
-
-  apiRouter.post('/sessions/ping', (req: Request, res: Response) => {
-    try {
-      const session = req.body?.session || req.body;
-      if (!session || !session.id) {
-        res.status(400).json({ success: false, error: 'Invalid session payload. Missing session.id' });
-        return;
-      }
-      const updated = addSession(session);
-      res.json({ success: true, count: updated.length, session });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to save session' });
-    }
-  });
-
-  apiRouter.delete('/sessions/ping/:id', (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const updated = deleteSession(id);
-      res.json({ success: true, count: updated.length });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to delete session' });
-    }
-  });
-
-  apiRouter.delete('/sessions/ping', (_req: Request, res: Response) => {
-    try {
-      clearSessions();
-      res.json({ success: true, count: 0 });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to clear sessions' });
-    }
-  });
-
-  /**
-   * Speed Test Session History Endpoints (Cross-Device & Persistent)
-   */
-  apiRouter.get('/sessions/speedtest', (_req: Request, res: Response) => {
-    try {
-      const sessions = getAllSpeedSessions();
-      res.json({ success: true, count: sessions.length, sessions });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to get speed test sessions' });
-    }
-  });
-
-  apiRouter.post('/sessions/speedtest', (req: Request, res: Response) => {
-    try {
-      const session = req.body?.session || req.body;
-      if (!session || !session.id) {
-        res.status(400).json({ success: false, error: 'Invalid session payload. Missing session.id' });
-        return;
-      }
-      const updated = addSpeedSession(session);
-      res.json({ success: true, count: updated.length, session });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to save speed test session' });
-    }
-  });
-
-  apiRouter.delete('/sessions/speedtest/:id', (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-      const updated = deleteSpeedSession(id);
-      res.json({ success: true, count: updated.length });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to delete speed test session' });
-    }
-  });
-
-  apiRouter.delete('/sessions/speedtest', (_req: Request, res: Response) => {
-    try {
-      clearSpeedSessions();
-      res.json({ success: true, count: 0 });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message || 'Failed to clear speed test sessions' });
-    }
-  });
-
   // Push Mode Agent Ingestion Routes
   const agentRouter = express.Router();
   agentRouter.get('/poll', healthRateLimiter, agentPoll);
@@ -954,8 +931,7 @@ export function createApiApp(): Application {
       req.path.startsWith('/auth') ||
       req.path.startsWith('/health') ||
       req.path.startsWith('/agent') ||
-      req.path.startsWith('/alerts') ||
-      req.path.startsWith('/sessions')
+      req.path.startsWith('/alerts')
     ) {
       return apiRouter(req, res, next);
     }
