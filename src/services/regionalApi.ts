@@ -6,6 +6,7 @@
  * - Real ICMP ping dispatch against 8.8.8.8
  * - Live endpoint connectivity testing
  * - Push mode polling when queued on serverless
+ * - In-app alert when a result contains timed-out ping requests
  * - Zero simulated or fake fallback data
  */
 
@@ -55,6 +56,14 @@ export interface RegionalPingApiResponse {
   timestamp: string;
   serverVersion?: string;
   error?: string;
+  /** Added by the central backend (push mode): timeout alert details */
+  alert?: {
+    level: 'none' | 'warning' | 'critical';
+    timeouts: number;
+    maxConsecutiveTimeouts: number;
+    threshold: number;
+    emailStatus: 'not_required' | 'sent' | 'skipped_cooldown' | 'not_configured' | 'failed';
+  };
 }
 
 export interface RegionalEndpointConfig {
@@ -199,6 +208,45 @@ async function readPingResponse(response: Response, baseUrl: string, regionId: s
   throw new Error(`Regional agent for ${regionId} did not return a result in time (${PUSH_MAX_WAIT_MS / 1000}s).`);
 }
 
+/**
+ * Shows an in-app alert when a result contains at least one timed-out ping request.
+ * (The e-mail for long runs of timeouts is sent by the backend.)
+ */
+function emitTimeoutAlert(data: RegionalPingApiResponse, regionId: RegionId): void {
+  try {
+    const packets = Array.isArray(data.packets) ? data.packets : [];
+    const sent = typeof data.requestsSent === 'number' ? data.requestsSent : packets.length;
+    let timeouts = packets.filter((p) => !p.success).length;
+    if (timeouts === 0 && typeof data.failedRequests === 'number') timeouts = data.failedRequests;
+    if (timeouts <= 0) return;
+
+    let run = 0;
+    let maxRun = 0;
+    for (const p of [...packets].sort((a, b) => a.sequence - b.sequence)) {
+      if (!p.success) {
+        run += 1;
+        if (run > maxRun) maxRun = run;
+      } else {
+        run = 0;
+      }
+    }
+    if (packets.length === 0) maxRun = data.alert?.maxConsecutiveTimeouts ?? (timeouts >= sent ? sent : 1);
+
+    publishPingAlert({
+      regionId,
+      timeouts,
+      total: sent,
+      maxConsecutive: maxRun,
+      packetLossPercent: typeof data.packetLossPercent === 'number' ? data.packetLossPercent : undefined,
+      level: data.alert?.level === 'warning' || data.alert?.level === 'critical' ? data.alert.level : undefined,
+      threshold: data.alert?.threshold,
+      emailStatus: data.alert?.emailStatus,
+    });
+  } catch {
+    /* alerts must never break a test result */
+  }
+}
+
 export async function executeRealRegionalPing(
   req: RegionalPingApiRequest,
   userAuthToken: string = ''
@@ -253,6 +301,9 @@ export async function executeRealRegionalPing(
     }
 
     const data: RegionalPingApiResponse = await readPingResponse(response, cleanBase, req.regionId);
+
+    // Alert on ANY timed-out ping request (the e-mail is sent by the backend only for long runs)
+    emitTimeoutAlert(data, req.regionId);
 
     if (!data.success && data.error) {
       throw new Error(`Server [${req.regionId}]: ${data.error}`);
