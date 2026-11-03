@@ -72,6 +72,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
   const [selectedDetailSession, setSelectedDetailSession] = useState<PingSession | null>(null);
   const [historySessions, setHistorySessions] = useState<PingSession[]>(() => loadStoredPingSessions());
   const [showHistory, setShowHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const isRunning = isRunningAll || singleRunningId !== null;
 
@@ -308,8 +309,13 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
               {historySessions.length > 0 && (
                 <button
                   onClick={async () => {
-                    await clearAllPingSessions();
-                    setHistorySessions([]);
+                    setHistoryError(null);
+                    try {
+                      await clearAllPingSessions();
+                      setHistorySessions([]);
+                    } catch (err: any) {
+                      setHistoryError(err?.message || 'The session history could not be cleared.');
+                    }
                   }}
                   type="button"
                   className="text-xs text-rose-400 hover:text-rose-300 transition-colors ml-2 cursor-pointer font-semibold"
@@ -319,6 +325,12 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
               )}
             </div>
           </div>
+
+          {historyError && (
+            <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">
+              {historyError}
+            </div>
+          )}
 
           {historySessions.length === 0 ? (
             <div className="text-center py-8 text-xs text-slate-400 font-mono">
@@ -369,8 +381,13 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          const updated = await removePingSession(sess.id);
-                          setHistorySessions(updated);
+                          setHistoryError(null);
+                          try {
+                            const updated = await removePingSession(sess.id);
+                            setHistorySessions(updated);
+                          } catch (err: any) {
+                            setHistoryError(err?.message || 'The session could not be deleted.');
+                          }
                         }}
                         type="button"
                         title="Delete this session"
