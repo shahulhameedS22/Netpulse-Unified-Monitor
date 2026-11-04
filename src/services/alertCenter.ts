@@ -19,7 +19,7 @@ export interface PublishPingAlertInput {
   maxConsecutive: number;     // longest run of consecutive timeouts
   packetLossPercent?: number;
   level?: 'warning' | 'critical';
-  threshold?: number;         // email is sent when consecutive timeouts are MORE than this (default 5)
+  threshold?: number;         // email is sent when this many (or more) timeouts happen in a row (default 5)
   emailStatus?: AlertEmailStatus;
 }
 
@@ -30,6 +30,8 @@ interface AlertItem {
   title: string;
   message: string;
   emailNote: string | null;
+  timeouts: number;
+  total: number;
   at: string;
 }
 
@@ -75,17 +77,21 @@ function emailNoteFor(level: 'warning' | 'critical', status?: AlertEmailStatus):
 export function publishPingAlert(input: PublishPingAlertInput): void {
   if (!input || !(input.timeouts > 0)) return;
   const threshold = input.threshold ?? 5;
-  const level: 'warning' | 'critical' = input.level ?? (input.maxConsecutive > threshold ? 'critical' : 'warning');
+  const level: 'warning' | 'critical' = input.level ?? (input.maxConsecutive >= threshold ? 'critical' : 'warning');
   const loss = typeof input.packetLossPercent === 'number' ? input.packetLossPercent : Math.round((input.timeouts / Math.max(1, input.total)) * 1000) / 10;
   const item: AlertItem = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     level,
     regionId: input.regionId,
     title: level === 'critical'
-      ? `Critical: ${input.maxConsecutive} consecutive ping timeouts in ${input.regionId}`
-      : `Ping timeout detected in ${input.regionId}`,
+      ? `CRITICAL: ${input.maxConsecutive} consecutive ping timeouts`
+      : `Ping timeout alert: ${input.timeouts} request${input.timeouts === 1 ? '' : 's'} timed out`,
     message: `${input.timeouts} of ${input.total} ping requests to 8.8.8.8 timed out (${loss}% packet loss). Longest run of consecutive timeouts: ${input.maxConsecutive}.`,
-    emailNote: emailNoteFor(level, input.emailStatus),
+    emailNote: level === 'critical'
+      ? emailNoteFor(level, input.emailStatus)
+      : `An email is sent automatically when ${threshold} or more timeouts happen in a row.`,
+    timeouts: input.timeouts,
+    total: input.total,
     at: new Date().toISOString(),
   };
   // The same result can be reported twice (by the dashboard code and by the watcher below): show it once.
@@ -110,9 +116,20 @@ function dismissAll(): void {
 
 const h = React.createElement;
 const PALETTE = {
-  warning: { border: '#d97706', bg: '#fffbeb', title: '#92400e', icon: '\u26A0' },
-  critical: { border: '#dc2626', bg: '#fef2f2', title: '#991b1b', icon: '\u26D4' },
+  warning: { border: '#d97706', bg: '#fffbeb', title: '#92400e', chip: '#d97706', icon: '\u26A0' },
+  critical: { border: '#dc2626', bg: '#fef2f2', title: '#991b1b', chip: '#dc2626', icon: '\u26D4' },
 };
+
+const STYLE_ID = 'ping-alert-center-style';
+function injectStyle(): void {
+  if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
+  const el = document.createElement('style');
+  el.id = STYLE_ID;
+  el.textContent =
+    '@keyframes pingAlertIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}' +
+    '@keyframes pingAlertPulse{0%,100%{box-shadow:0 6px 22px rgba(220,38,38,.35)}50%{box-shadow:0 6px 30px rgba(220,38,38,.75)}}';
+  document.head.appendChild(el);
+}
 
 function AlertCenter(): React.ReactElement | null {
   const [, force] = React.useReducer((n: number) => n + 1, 0);
@@ -125,36 +142,43 @@ function AlertCenter(): React.ReactElement | null {
   const closeBtn = (onClick: () => void, label: string) =>
     h('button', {
       type: 'button', onClick, 'aria-label': label, title: label,
-      style: { background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1, color: '#6b7280', padding: 2 },
+      style: { background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: '#6b7280', padding: 2 },
     }, '\u00D7');
 
   return h('div', {
     role: 'region', 'aria-label': 'Ping alerts',
     style: {
-      position: 'fixed', top: 16, right: 16, width: 390, maxWidth: 'calc(100vw - 32px)', maxHeight: '85vh',
-      overflowY: 'auto', zIndex: 2147483000, display: 'flex', flexDirection: 'column', gap: 10,
+      position: 'fixed', top: 16, right: 16, width: 430, maxWidth: 'calc(100vw - 32px)', maxHeight: '88vh',
+      overflowY: 'auto', zIndex: 2147483000, display: 'flex', flexDirection: 'column', gap: 12,
       fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif',
     },
   },
     items.length > 1 && h('div', {
-      style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#111827', color: '#fff', borderRadius: 8, padding: '8px 12px', fontSize: 13 },
+      style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#111827', color: '#fff', borderRadius: 10, padding: '10px 14px', fontSize: 14, fontWeight: 600 },
     },
-      h('span', null, `${items.length} active alerts`),
-      h('button', { type: 'button', onClick: dismissAll, style: { background: 'transparent', color: '#fff', border: '1px solid #6b7280', borderRadius: 6, padding: '2px 10px', cursor: 'pointer', fontSize: 12 } }, 'Dismiss all'),
+      h('span', null, `${items.length} active ping alerts`),
+      h('button', { type: 'button', onClick: dismissAll, style: { background: 'transparent', color: '#fff', border: '1px solid #9ca3af', borderRadius: 6, padding: '3px 12px', cursor: 'pointer', fontSize: 13 } }, 'Dismiss all'),
     ),
     ...items.map((a) => {
       const c = PALETTE[a.level];
       return h('div', {
         key: a.id, role: 'alert',
-        style: { background: c.bg, borderLeft: `5px solid ${c.border}`, borderRadius: 8, boxShadow: '0 4px 14px rgba(0,0,0,.18)', padding: '10px 12px', color: '#111827' },
+        style: {
+          background: c.bg, borderLeft: `8px solid ${c.border}`, borderRadius: 10, padding: '14px 16px', color: '#111827',
+          boxShadow: '0 6px 22px rgba(0,0,0,.35)',
+          animation: a.level === 'critical' ? 'pingAlertIn .35s ease-out, pingAlertPulse 1.8s ease-in-out 3' : 'pingAlertIn .35s ease-out',
+        },
       },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
-          h('div', { style: { fontWeight: 700, fontSize: 14, color: c.title } }, `${c.icon} ${a.title}`),
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+            h('span', { style: { background: c.chip, color: '#fff', fontWeight: 800, fontSize: 12, letterSpacing: 0.5, padding: '3px 10px', borderRadius: 999 } }, a.regionId),
+            h('span', { style: { fontWeight: 800, fontSize: 16, color: c.title } }, `${c.icon} ${a.title}`),
+          ),
           closeBtn(() => dismiss(a.id), 'Dismiss alert'),
         ),
-        h('div', { style: { fontSize: 13, marginTop: 4, lineHeight: 1.45 } }, a.message),
-        a.emailNote && h('div', { style: { fontSize: 12.5, marginTop: 6, color: '#374151', fontWeight: 600 } }, a.emailNote),
-        h('div', { style: { fontSize: 11.5, marginTop: 6, color: '#6b7280' } }, new Date(a.at).toLocaleString()),
+        h('div', { style: { fontSize: 14.5, marginTop: 8, lineHeight: 1.5, fontWeight: 500 } }, a.message),
+        a.emailNote && h('div', { style: { fontSize: 13, marginTop: 8, color: '#374151', fontWeight: 700 } }, a.emailNote),
+        h('div', { style: { fontSize: 12, marginTop: 8, color: '#6b7280' } }, new Date(a.at).toLocaleString()),
       );
     }),
   );
@@ -163,6 +187,7 @@ function AlertCenter(): React.ReactElement | null {
 function ensureMounted(): void {
   if (typeof document === 'undefined' || !document.body) return;
   if (document.getElementById(ROOT_ID)) return;
+  injectStyle();
   const el = document.createElement('div');
   el.id = ROOT_ID;
   document.body.appendChild(el);
