@@ -1,7 +1,7 @@
 /**
  * Timeout alert EMAIL for the ping monitor (server side).
  *
- * - An email is sent only when MORE THAN ALERT_CONSECUTIVE_TIMEOUTS (default 5) ping requests in a row
+ * - An email is sent when ALERT_CONSECUTIVE_TIMEOUTS (default 5) OR MORE ping requests in a row
  *   time out in one test, at most once per region per ALERT_EMAIL_COOLDOWN_MIN (default 30) minutes.
  * - Any timeout (even one) is flagged to the dashboard through result.alert (see buildAlert).
  * - POST /api/alerts/test-email (administrator key) sends a clearly marked TEST email.
@@ -99,7 +99,7 @@ export function buildAlert(result: any): PingAlert {
   const threshold = alertThreshold();
   const timeouts: number = result.failedRequests;
   const maxRun = longestTimeoutRun(result.packets || [], result.requestsSent, timeouts);
-  const level: PingAlert['level'] = timeouts <= 0 ? 'none' : maxRun > threshold ? 'critical' : 'warning';
+  const level: PingAlert['level'] = timeouts <= 0 ? 'none' : maxRun >= threshold ? 'critical' : 'warning';
   return { level, timeouts, maxConsecutiveTimeouts: maxRun, threshold, emailStatus: 'not_required' };
 }
 
@@ -126,7 +126,7 @@ function buildAlertEmail(region: RegionId, result: any, alert: PingAlert, isTest
 
   const intro =
     `Regional Ping Monitor detected ${n} consecutive ping requests that timed out from ${label} to ${FIXED_TARGET_IP}. ` +
-    `This exceeds the alert threshold of ${alert.threshold} consecutive timeouts, so this notification was sent automatically.`;
+    `This reaches the alert threshold of ${alert.threshold} consecutive timeouts, so this notification was sent automatically.`;
 
   const rows: Array<[string, string]> = [
     ['Region', label],
