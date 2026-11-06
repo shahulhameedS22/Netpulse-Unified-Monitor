@@ -10,8 +10,8 @@ import { Navigation, NavTab } from './components/Navigation';
 import { UnifiedDashboardPage } from './pages/UnifiedDashboardPage';
 import { SpeedTestPage } from './pages/SpeedTestPage';
 import { PingMonitorPage } from './pages/PingMonitorPage';
-import { EndpointsPage } from './pages/EndpointsPage';
 import { MonitoringPage } from './pages/MonitoringPage';
+import { EndpointsPage } from './pages/EndpointsPage';
 import { Loader2, Activity } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
@@ -20,13 +20,9 @@ const MainAppContent: React.FC = () => {
   const [speedTestRunning, setSpeedTestRunning] = useState(false);
   const [pingTestRunning, setPingTestRunning] = useState(false);
 
-  // "Next test" attention animation: plays only for the FIRST completed test of a
-  // visit, whichever app it was in. Held in memory only (not localStorage), so a
-  // refresh, closing the tab or leaving the site makes it play once again.
   const [nextStepAnimationUsed, setNextStepAnimationUsed] = useState(false);
   const markNextStepAnimationUsed = useCallback(() => setNextStepAnimationUsed(true), []);
 
-  // Loading screen while verifying persistent session
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0b1329] flex flex-col items-center justify-center p-4">
@@ -34,26 +30,19 @@ const MainAppContent: React.FC = () => {
           <div className="w-12 h-12 rounded-2xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-400 flex items-center justify-center animate-pulse shadow-lg shadow-cyan-500/20">
             <Activity className="w-6 h-6 animate-spin" />
           </div>
-          <div className="text-sm font-bold text-white tracking-wide">
-            Verifying Operator Session...
-          </div>
-          <div className="text-xs text-slate-300 font-mono">
-            Firebase Authentication
-          </div>
+          <div className="text-sm font-bold text-white tracking-wide">Verifying Operator Session...</div>
+          <div className="text-xs text-slate-300 font-mono">Firebase Authentication</div>
         </div>
       </div>
     );
   }
 
-  // Unauthenticated user -> Login Page
   if (!user) {
     return <LoginPage />;
   }
 
-  // Authenticated user -> Unified NOC Dashboard & Apps
   return (
     <div className="min-h-screen bg-[#0b1329] text-slate-100 flex flex-col selection:bg-cyan-500/30 selection:text-cyan-200">
-      {/* Navigation Header */}
       <Navigation
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
@@ -61,7 +50,6 @@ const MainAppContent: React.FC = () => {
         pingTestRunning={pingTestRunning}
       />
 
-      {/* Main App Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {currentTab === 'dashboard' && (
           <UnifiedDashboardPage
@@ -91,18 +79,13 @@ const MainAppContent: React.FC = () => {
 
         {currentTab === 'monitoring' && <MonitoringPage />}
 
-        {currentTab === 'endpoints' && (
-          <EndpointsPage />
-        )}
+        {currentTab === 'endpoints' && <EndpointsPage />}
       </main>
 
-      {/* Unified Footer */}
       <footer className="border-t border-slate-700/80 bg-[#0f172a] py-6 text-center text-xs text-slate-300">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3 font-mono">
           <div className="font-semibold text-slate-200">Unified Network Operations Center • India (IN) | Sri Lanka (SL) | Singapore (SG)</div>
-          <div className="text-slate-400">
-            LibreSpeed v5.2.5 • ICMP Probing Engine • Zero Fake Metrics
-          </div>
+          <div className="text-slate-400">LibreSpeed v5.2.5 • ICMP Probing Engine • Zero Fake Metrics</div>
         </div>
       </footer>
     </div>
