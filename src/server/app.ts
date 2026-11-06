@@ -15,9 +15,7 @@ import dotenv from 'dotenv';
 // NOTE: relative imports end in .js (not .ts): the Vercel function runs as an ES module and cannot load .ts files.
 import { dispatchSpeedTestRoute } from './speedTestApi.js';
 import { buildAlert, sendCriticalAlertEmail, registerAlertRoutes } from './alerts.js';
-import { registerMonitoringRoutes } from './monitoring.js';
-import { firebaseAuthMiddleware } from './firebaseAuth.js';
-import { firestoreCreate, firestoreDelete, firestoreGet, firestoreSet, isFirestoreConfigured } from './firestoreRest.js';
+import { registerMonitoringRoutes, recordSamples, sampleFromPingResult, schedulerState } from './monitoring.js';
 
 dotenv.config();
 
@@ -190,16 +188,6 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return next();
   }
 
-  // Analytics uses a separately verified Firebase ID token in X-Firebase-Auth.
-  // Permit it through this central API-key gate only for analytics paths; the
-  // route-specific Firebase middleware immediately verifies the token.
-  const hasFirebaseAnalyticsToken = typeof req.headers['x-firebase-auth'] === 'string'
-    && (req.path.startsWith('/metrics') || req.path.startsWith('/monitor'));
-  if (hasFirebaseAnalyticsToken) {
-    req.isApiKeyAuthenticated = false;
-    return next();
-  }
-
   if (process.env.REQUIRE_AUTH === 'true') {
     res.status(401).json({
       ok: false,
@@ -312,6 +300,13 @@ const PUSH_SEEN_TTL_S = 1200;
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const agentKeyEnvName = (r: RegionId) => `AGENT_KEY_${r.replace(/-/g, '_')}`;
+const PK = {
+  req: (r: string) => `ping:req:${r}`,
+  seen: (r: string) => `ping:seen:${r}`,
+  cool: (r: string) => `ping:cool:${r}`,
+  res: (r: string, id: string) => `ping:res:${r}:${id}`,
+};
+
 // A region is in push mode only when ITS OWN key AGENT_KEY_<REGION> is set.
 // (A shared fallback key was removed: it made every region look "online" and mapped every agent to the last region.)
 export function isPushRegion(regionId: string): regionId is RegionId {
@@ -338,23 +333,35 @@ function authAgent(req: Request): RegionId | null {
   return found;
 }
 
-const AGENT_REQUESTS = 'netpulse_agent_requests';
-const AGENT_HEARTBEATS = 'netpulse_agent_heartbeats';
-const AGENT_RESULTS = 'netpulse_agent_results';
-const AGENT_COOLDOWNS = 'netpulse_agent_cooldowns';
+type RedisCmd = (string | number)[];
 
-function isUnexpired(record: any): boolean {
-  const expiry = typeof record?.expiresAt === 'string' ? Date.parse(record.expiresAt) : Number(record?.expiresAt);
-  return Number.isFinite(expiry) && expiry > Date.now();
+function redisConfig(): { url: string; token: string } | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
 }
 
-async function saveAgentHeartbeat(region: RegionId): Promise<void> {
-  const now = Date.now();
-  await firestoreSet(AGENT_HEARTBEATS, region, {
-    region,
-    lastSeenAt: now,
-    expiresAt: new Date(now + PUSH_SEEN_TTL_S * 1000),
-  });
+async function redisPipeline(cmds: RedisCmd[]): Promise<any[]> {
+  const cfg = redisConfig();
+  if (!cfg) throw new Error('STORAGE_NOT_CONFIGURED');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const r = await fetch(`${cfg.url}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(cmds),
+      signal: controller.signal,
+    });
+    if (!r.ok) throw new Error(`Storage HTTP ${r.status}`);
+    const arr = (await r.json()) as Array<{ result?: any; error?: string }>;
+    return arr.map((x) => {
+      if (x.error) throw new Error(x.error);
+      return x.result;
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const DEFAULT_PING_UPSTREAM = (
@@ -370,24 +377,26 @@ async function agentPoll(req: Request, res: Response): Promise<void> {
     return;
   }
   try {
-    if (req.header('x-heartbeat') === '1') await saveAgentHeartbeat(region);
-    const rec = await firestoreGet(AGENT_REQUESTS, region);
-    if (!rec || !isUnexpired(rec) || rec.status !== 'pending') {
-      if (rec && !isUnexpired(rec)) await firestoreDelete(AGENT_REQUESTS, region).catch(() => undefined);
+    const cmds: RedisCmd[] = [['GET', PK.req(region)]];
+    if (req.header('x-heartbeat') === '1') cmds.push(['SET', PK.seen(region), String(Date.now()), 'EX', PUSH_SEEN_TTL_S]);
+    const out = await redisPipeline(cmds);
+    const raw = out[0];
+    if (!raw) {
       res.json({ pending: false });
       return;
     }
-    const startedAt = Date.now();
-    await firestoreSet(AGENT_REQUESTS, region, {
-      ...rec,
-      status: 'running',
-      startedAt,
-      expiresAt: new Date(startedAt + PUSH_REQUEST_TTL_S * 1000),
-    });
+    const rec = JSON.parse(raw);
+    if (rec.status !== 'pending') {
+      res.json({ pending: false });
+      return;
+    }
+    await redisPipeline([
+      ['SET', PK.req(region), JSON.stringify({ ...rec, status: 'running', startedAt: Date.now() }), 'EX', PUSH_REQUEST_TTL_S],
+      ['SET', PK.seen(region), String(Date.now()), 'EX', PUSH_SEEN_TTL_S],
+    ]);
     res.json({ pending: true, requestId: rec.requestId, count: rec.count });
-  } catch (error: any) {
-    console.error('[agent-poll] Firestore queue error:', error?.message || error);
-    res.status(503).json({ pending: false, error: 'Push Agent queue storage is temporarily unavailable.' });
+  } catch {
+    res.json({ pending: false });
   }
 }
 
@@ -457,14 +466,15 @@ async function agentIngest(req: Request, res: Response): Promise<void> {
     return;
   }
   const clean = sanitizeAgentResult(req.body, region);
-  if (clean.ok === false) {
+  if (!clean.ok) {
     res.status(400).json({ error: clean.error });
     return;
   }
   try {
     // the result must belong to the test that is open for this region
-    const rec = await firestoreGet(AGENT_REQUESTS, region);
-    if (!rec || !isUnexpired(rec) || rec.requestId !== requestId) {
+    const [raw] = await redisPipeline([['GET', PK.req(region)]]);
+    const rec = raw ? JSON.parse(raw) : null;
+    if (!rec || rec.requestId !== requestId) {
       res.status(409).json({ error: 'No matching pending test request (expired or already completed).' });
       return;
     }
@@ -472,25 +482,78 @@ async function agentIngest(req: Request, res: Response): Promise<void> {
     const alert = buildAlert(clean.result);
     if (alert.level === 'critical') alert.emailStatus = await sendCriticalAlertEmail(region, clean.result, alert);
     clean.result.alert = alert;
-    const now = Date.now();
-    await firestoreSet(AGENT_RESULTS, `${region}:${requestId}`, {
-      region,
-      requestId,
-      result: clean.result,
-      createdAt: now,
-      expiresAt: new Date(now + PUSH_RESULT_TTL_S * 1000),
-    });
-    await firestoreDelete(AGENT_REQUESTS, region);
-    await firestoreSet(AGENT_COOLDOWNS, region, {
-      region,
-      expiresAt: new Date(now + PUSH_COOLDOWN_S * 1000),
-    });
-    await saveAgentHeartbeat(region);
+    // Scheduled (automatic) test: keep the measurement in the long-term history and check it for anomalies.
+    if (rec.scheduled) {
+      const sample = sampleFromPingResult(region, clean.result, 'scheduled');
+      if (sample) await recordSamples([sample]).catch((e) => console.error('[history] could not record scheduled result:', e?.message || e));
+    }
+    await redisPipeline([
+      ['SET', PK.res(region, requestId), JSON.stringify(clean.result), 'EX', PUSH_RESULT_TTL_S],
+      ['DEL', PK.req(region)],
+      ['SET', PK.cool(region), '1', 'EX', PUSH_COOLDOWN_S],
+      ['SET', PK.seen(region), String(Date.now()), 'EX', PUSH_SEEN_TTL_S],
+    ]);
     res.json({ ok: true });
   } catch (err: any) {
     console.error('[ingest] storage error:', err?.message || err);
     res.status(500).json({ ok: false, error: 'Result storage is temporarily unavailable.' });
   }
+}
+
+/**
+ * One automatic monitoring round (no browser needed).
+ *  - direct regions: asks the regional ping daemon for a ping test and stores the result right away
+ *  - push-agent regions: queues a test flagged "scheduled"; the result is stored when the agent reports it
+ * Triggered by the built-in timer (MONITOR_INTERVAL_MIN, see server.ts) or by GET/POST /api/monitor/run (cron).
+ */
+export async function runScheduledProbes(): Promise<Array<{ region: string; status: string; detail?: string }>> {
+  const envCount = Number(process.env.MONITOR_PING_COUNT);
+  const count = Number.isInteger(envCount) && envCount >= MIN_PING_COUNT && envCount <= MAX_PING_COUNT ? envCount : 10;
+  const results: Array<{ region: string; status: string; detail?: string }> = [];
+  const samples: NonNullable<ReturnType<typeof sampleFromPingResult>>[] = [];
+
+  await Promise.all(
+    ALLOWED_REGIONS.map(async (regionId) => {
+      try {
+        const endpointUrl = getRegionalEndpointUrl(regionId);
+        if (endpointUrl) {
+          const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Session-ID': `sched_${Date.now()}` };
+          if (process.env.REGIONAL_API_KEY) headers['Authorization'] = `Bearer ${process.env.REGIONAL_API_KEY}`;
+          const response = await fetch(`${endpointUrl.replace(/\/+$/, '')}/ping`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ targetIp: FIXED_TARGET_IP, count, timeoutMs: 25000, regionId }),
+            signal: AbortSignal.timeout(PING_TIMEOUT_MS),
+          });
+          if (!response.ok) {
+            results.push({ region: regionId, status: 'error', detail: `Regional agent answered HTTP ${response.status}` });
+            return;
+          }
+          const sample = sampleFromPingResult(regionId, await response.json(), 'scheduled');
+          if (sample) samples.push(sample);
+          results.push({ region: regionId, status: sample ? 'recorded' : 'no_data' });
+        } else if (isPushRegion(regionId)) {
+          if (!redisConfig()) { results.push({ region: regionId, status: 'skipped', detail: 'Redis queue not configured' }); return; }
+          const [seen, pending, cool] = await redisPipeline([['GET', PK.seen(regionId)], ['GET', PK.req(regionId)], ['EXISTS', PK.cool(regionId)]]);
+          if (!seen || Date.now() - Number(seen) > AGENT_STALE_MS) { results.push({ region: regionId, status: 'agent_offline' }); return; }
+          if (pending) { results.push({ region: regionId, status: 'already_queued' }); return; }
+          if (Number(cool) > 0) { results.push({ region: regionId, status: 'cooldown' }); return; }
+          const requestId = crypto.randomUUID();
+          await redisPipeline([['SET', PK.req(regionId), JSON.stringify({ requestId, status: 'pending', count, scheduled: true, createdAt: Date.now() }), 'EX', PUSH_REQUEST_TTL_S]]);
+          results.push({ region: regionId, status: 'queued', detail: 'Result is stored when the agent reports back' });
+        } else {
+          results.push({ region: regionId, status: 'skipped', detail: 'No direct endpoint or push-agent key configured for this region' });
+        }
+      } catch (err: any) {
+        results.push({ region: regionId, status: 'error', detail: formatNetworkError(err) });
+      }
+    })
+  );
+
+  if (samples.length) await recordSamples(samples);
+  schedulerState.lastRunAt = Date.now();
+  schedulerState.lastResult = results;
+  return results;
 }
 
 export function createApiApp(): Application {
@@ -515,16 +578,13 @@ export function createApiApp(): Application {
   const apiRouter = express.Router();
   apiRouter.use(authMiddleware);
 
-  // Analytics endpoints require a verified Firebase user. Server-side history writes
-  // use the Firestore service account; browser requests cannot inject unauthenticated samples.
-  apiRouter.use('/metrics', firebaseAuthMiddleware);
-  apiRouter.use('/monitor', firebaseAuthMiddleware);
-
   // Timeout alerts: POST /api/alerts/test-email (administrator key required)
   registerAlertRoutes(apiRouter);
 
-  // Historical analytics only records completed tests submitted by authenticated operators.
+  // History, comparison, anomaly detection and scheduled monitoring
   registerMonitoringRoutes(apiRouter, {
+    runProbes: runScheduledProbes,
+    safeCompare,
     rateLimiter: healthRateLimiter as any,
   });
 
@@ -665,11 +725,11 @@ export function createApiApp(): Application {
       }
     }
 
-    // 2. Local push mode heartbeat check (Firestore-backed)
+    // 2. Local push mode check if Redis configured
     if (isPushRegion(regionId)) {
       try {
-        const heartbeat = await firestoreGet(AGENT_HEARTBEATS, regionId);
-        const ageMs = heartbeat && isUnexpired(heartbeat) ? Date.now() - Number(heartbeat.lastSeenAt) : Infinity;
+        const [seen] = await redisPipeline([['GET', PK.seen(regionId)]]);
+        const ageMs = seen ? Date.now() - Number(seen) : Infinity;
         if (ageMs <= AGENT_STALE_MS) {
           res.json({
             ok: true,
@@ -790,70 +850,46 @@ export function createApiApp(): Application {
       }
     }
 
-    // 2. Local Push Agent mode (Firestore-backed queue)
+    // 2. Local push mode if Redis configured
     if (isPushRegion(regionId)) {
-      if (!isFirestoreConfigured()) {
+      if (!redisConfig()) {
         res.status(503).json({
           success: false,
           regionId,
-          error: 'Push Agent queue storage is not configured. Configure the Firebase service account for Firestore on the server.',
+          error: 'Push agent queue storage is not configured: In Vercel, go to Storage > Create Database > Upstash Redis to connect KV storage.',
         });
         return;
       }
 
       try {
-        const [heartbeat, pending, cooldown] = await Promise.all([
-          firestoreGet(AGENT_HEARTBEATS, regionId),
-          firestoreGet(AGENT_REQUESTS, regionId),
-          firestoreGet(AGENT_COOLDOWNS, regionId),
-        ]);
-        if (!heartbeat || !isUnexpired(heartbeat) || Date.now() - Number(heartbeat.lastSeenAt) > AGENT_STALE_MS) {
+        const [seen, pending, cool] = await redisPipeline([['GET', PK.seen(regionId)], ['GET', PK.req(regionId)], ['EXISTS', PK.cool(regionId)]]);
+        if (!seen || Date.now() - Number(seen) > AGENT_STALE_MS) {
           res.status(503).json({
             success: false,
             regionId,
-            error: `Regional push agent for ${regionId} is offline: no heartbeat in the last 10 minutes. Ensure push-agent.cjs is running and AGENT_URL points to this app.`,
+            error: `Regional push agent for ${regionId} is offline: no heartbeat in the last 10 minutes. Ensure push-agent.cjs is running on the VM with AGENT_URL pointing to this app.`,
           });
           return;
         }
-        if (pending && isUnexpired(pending)) {
-          res.status(202).json({ status: 'queued', requestId: pending.requestId, regionId, pollAfterMs: 3000 });
+        if (pending) {
+          const rec = JSON.parse(pending);
+          res.status(202).json({ status: 'queued', requestId: rec.requestId, regionId, pollAfterMs: 3000 });
           return;
         }
-        if (pending && !isUnexpired(pending)) await firestoreDelete(AGENT_REQUESTS, regionId);
-        if (cooldown && isUnexpired(cooldown)) {
+        if (Number(cool) > 0) {
           res.setHeader('Retry-After', String(PUSH_COOLDOWN_S));
           res.status(429).json({ success: false, regionId, error: `A test for ${regionId} just finished. Please wait ${PUSH_COOLDOWN_S}s before starting another.` });
           return;
         }
         const requestId = crypto.randomUUID();
-        const now = Date.now();
-        try {
-          await firestoreCreate(AGENT_REQUESTS, regionId, {
-            region: regionId,
-            requestId,
-            status: 'pending',
-            count,
-            createdAt: now,
-            expiresAt: new Date(now + PUSH_REQUEST_TTL_S * 1000),
-          });
-        } catch (createError: any) {
-          if (String(createError?.message || '').includes('ALREADY_EXISTS')) {
-            const raced = await firestoreGet(AGENT_REQUESTS, regionId);
-            if (raced && isUnexpired(raced)) {
-              res.status(202).json({ status: 'queued', requestId: raced.requestId, regionId, pollAfterMs: 3000 });
-              return;
-            }
-          }
-          throw createError;
-        }
+        await redisPipeline([['SET', PK.req(regionId), JSON.stringify({ requestId, status: 'pending', count, createdAt: Date.now() }), 'EX', PUSH_REQUEST_TTL_S]]);
         res.status(202).json({ status: 'queued', requestId, regionId, pollAfterMs: 3000 });
         return;
       } catch (err: any) {
-        console.error('[push-agent] Firestore queue error:', err?.message || err);
-        res.status(503).json({
+        res.status(500).json({
           success: false,
           regionId,
-          error: 'Push Agent queue storage is temporarily unavailable.',
+          error: `Storage error: ${err.message || 'Unable to access Redis queue'}`,
         });
         return;
       }
@@ -912,18 +948,15 @@ export function createApiApp(): Application {
       return;
     }
 
-    // 1. Local Push Agent result lookup (Firestore-backed)
+    // 1. Local push mode if Redis configured
     if (isPushRegion(regionId)) {
       try {
-        const [done, pending] = await Promise.all([
-          firestoreGet(AGENT_RESULTS, `${regionId}:${requestId}`),
-          firestoreGet(AGENT_REQUESTS, regionId),
-        ]);
-        if (done && isUnexpired(done)) {
-          res.json({ status: 'done', result: done.result });
+        const [done, pending] = await redisPipeline([['GET', PK.res(regionId, requestId)], ['GET', PK.req(regionId)]]);
+        if (done) {
+          res.json({ status: 'done', result: JSON.parse(done) });
           return;
         }
-        const rec = pending && isUnexpired(pending) ? pending : null;
+        const rec = pending ? JSON.parse(pending) : null;
         if (rec && rec.requestId === requestId) {
           res.status(202).json({ status: rec.status });
           return;
