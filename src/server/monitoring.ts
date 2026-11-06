@@ -8,11 +8,13 @@
  *   GET  /metrics/anomalies              detected anomalies (open / acknowledged)
  *   POST /metrics/anomalies/:id/ack      acknowledge an anomaly
  *   GET  /metrics/export.csv             raw history download
- *   GET  /monitor/config                 thresholds and durable storage status
+ *   GET  /monitor/config                 thresholds, storage mode, scheduler status
+ *   GET|POST /monitor/run                run one scheduled probe round (needs CENTRAL_API_KEY or CRON_SECRET)
  */
 import type { Request, Response, Router } from 'express';
+import crypto from 'crypto';
 import {
-  addAnomaly, addSample, ackAnomaly, getAckedIds, getAnomalies, getSamples, storageInfo, REGIONS,
+  addAnomaly, addSample, ackAnomaly, getAckedIds, getAnomalies, getSamples, pruneOld, storageInfo, retentionDays, REGIONS,
   type MetricKind, type Sample, type StoredAnomaly,
 } from './metricsStore.js';
 import { METRICS, bucketSeries, comparePeriods, detectAnomalies, detectorConfig } from './anomaly.js';
@@ -22,9 +24,9 @@ const isRegion = (r: unknown): r is string => typeof r === 'string' && (REGIONS 
 const finite = (v: unknown, min: number, max: number): v is number =>
   typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
 
-/* ---------------------- turning manually completed sessions into samples ---------------------- */
+/* ---------------------- turning a session into samples ---------------------- */
 
-export function samplesFromPingSession(session: any): Sample[] {
+export function samplesFromPingSession(session: any, source: Sample['source'] = 'manual'): Sample[] {
   if (!session || typeof session !== 'object' || session.isSimulated === true) return [];
   const out: Sample[] = [];
   const regions = session.regions && typeof session.regions === 'object' ? session.regions : {};
@@ -40,13 +42,13 @@ export function samplesFromPingSession(session: any): Sample[] {
     if (finite(r.avgLatencyMs, 0, 60_000)) m.avgLatencyMs = r.avgLatencyMs;
     if (finite(r.jitterMs, 0, 60_000)) m.jitterMs = r.jitterMs;
     if (Object.keys(m).length === 0) continue;
-    out.push({ id: `ping:${rid}:${session.id || t}`, t, kind: 'ping', region: rid, source: 'manual', m });
+    out.push({ id: `ping:${rid}:${session.id || t}`, t, kind: 'ping', region: rid, source, m });
   }
   return out;
 }
 
-export function samplesFromSpeedSession(session: any): Sample[] {
-  if (!session || typeof session !== 'object' || session.isSimulated === true) return [];
+export function samplesFromSpeedSession(session: any, source: Sample['source'] = 'manual'): Sample[] {
+  if (!session || typeof session !== 'object') return [];
   const out: Sample[] = [];
   const regions = session.regions && typeof session.regions === 'object' ? session.regions : {};
   for (const r of Object.values<any>(regions)) {
@@ -59,9 +61,22 @@ export function samplesFromSpeedSession(session: any): Sample[] {
     if (finite(r.pingMs, 0, 60_000)) m.pingMs = r.pingMs;
     if (finite(r.jitterMs, 0, 60_000)) m.jitterMs = r.jitterMs;
     if (Object.keys(m).length === 0) continue;
-    out.push({ id: `speed:${r.serverCode}:${session.id || t}`, t, kind: 'speed', region: r.serverCode, source: 'manual', m });
+    out.push({ id: `speed:${r.serverCode}:${session.id || t}`, t, kind: 'speed', region: r.serverCode, source, m });
   }
   return out;
+}
+
+/** Converts one finished ping result (from a scheduled probe / agent) into a sample. */
+export function sampleFromPingResult(regionId: string, result: any, source: Sample['source']): Sample | null {
+  if (!isRegion(regionId) || !result || !finite(result.requestsSent, 1, 1000)) return null;
+  const t = Date.parse(result.timestamp) || Date.now();
+  const m: Record<string, number> = {};
+  if (finite(result.packetLossPercent, 0, 100)) m.packetLossPercent = result.packetLossPercent;
+  else if (finite(result.failedRequests, 0, 1000)) m.packetLossPercent = Math.round((result.failedRequests / result.requestsSent) * 1000) / 10;
+  if (finite(result.avgLatencyMs, 0, 60_000)) m.avgLatencyMs = result.avgLatencyMs;
+  if (finite(result.jitterMs, 0, 60_000)) m.jitterMs = result.jitterMs;
+  if (Object.keys(m).length === 0) return null;
+  return { id: `ping:${regionId}:sched_${t}`, t, kind: 'ping', region: regionId, source, m };
 }
 
 /* ---------------------- record + detect + notify ---------------------- */
@@ -102,7 +117,7 @@ export async function recordSamples(samples: Sample[]): Promise<StoredAnomaly[]>
   }
   for (const a of found) await addAnomaly(a);
 
-  // Firestore TTL cleans records using expiresAt; avoid per-ingest collection scans.
+  if (Math.random() < 0.05) pruneOld().catch(() => undefined); // retention clean-up, now and then
   return found;
 }
 
@@ -138,7 +153,17 @@ async function sendAnomalyEmail(items: StoredAnomaly[]): Promise<string> {
 const RANGE_MS: Record<string, number> = { '1h': 3_600_000, '6h': 21_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000, '90d': 90 * 86_400_000 };
 const parseKind = (v: unknown): MetricKind | null => (v === 'ping' || v === 'speed' ? v : null);
 
+export interface SchedulerState {
+  intervalMin: number | null;
+  lastRunAt: number | null;
+  lastResult: Array<{ region: string; status: string; detail?: string }> | null;
+}
+export const schedulerState: SchedulerState = { intervalMin: null, lastRunAt: null, lastResult: null };
+
 export interface MonitoringDeps {
+  /** runs one probe round for all regions (implemented in app.ts, which owns the regional connections) */
+  runProbes: () => Promise<Array<{ region: string; status: string; detail?: string }>>;
+  safeCompare: (a: string, b: string) => boolean;
   rateLimiter: (req: Request, res: Response, next: () => void) => void;
 }
 
@@ -157,22 +182,14 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
       metrics: METRICS,
       regions: REGIONS,
       email: { configured: Boolean(process.env.RESEND_API_KEY?.trim() && alertRecipients().length), minSeverity: emailMinSeverity(), cooldownMin: Math.round(emailCooldownMs() / 60000) },
+      scheduler: schedulerState,
     });
   });
 
   router.post('/metrics/ingest', deps.rateLimiter, async (req, res) => {
     const kind = parseKind(req.body?.kind);
     if (!kind) { res.status(400).json({ ok: false, error: 'kind must be "ping" or "speed".' }); return; }
-    const session = req.body?.session;
-    if (!session || typeof session !== 'object' || typeof session.id !== 'string' || session.id.length > 160) {
-      res.status(400).json({ ok: false, error: 'A valid completed test session is required.' });
-      return;
-    }
-    const samples = kind === 'ping' ? samplesFromPingSession(session) : samplesFromSpeedSession(session);
-    if (!samples.length) {
-      res.status(422).json({ ok: false, error: 'No completed real regional measurements were found in this session.' });
-      return;
-    }
+    const samples = kind === 'ping' ? samplesFromPingSession(req.body?.session) : samplesFromSpeedSession(req.body?.session);
     try {
       const anomalies = await recordSamples(samples);
       res.json({ ok: true, stored: samples.length, anomalies });
@@ -241,4 +258,17 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
     } catch (e) { fail(res, e); }
   });
 
+  // One scheduled probe round. Allowed for the administrator key OR the Vercel cron secret.
+  const runHandler = async (req: Request, res: Response) => {
+    const bearer = typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ') ? req.headers.authorization.slice(7).trim() : '';
+    const cron = process.env.CRON_SECRET?.trim();
+    const ok = (req as any).isApiKeyAuthenticated === true || (cron && bearer && deps.safeCompare(bearer, cron));
+    if (!ok) { res.status(401).json({ ok: false, error: 'Administrator key or CRON_SECRET required.' }); return; }
+    try {
+      const result = await deps.runProbes();
+      res.json({ ok: true, result });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || 'Probe round failed.' }); }
+  };
+  router.get('/monitor/run', runHandler);
+  router.post('/monitor/run', runHandler);
 }
