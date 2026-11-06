@@ -11,9 +11,10 @@ import {
   Menu,
   X,
   Shield,
+  TrendingUp,
 } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'speedtest' | 'ping' | 'endpoints';
+export type NavTab = 'dashboard' | 'speedtest' | 'ping' | 'monitoring' | 'endpoints';
 
 interface NavigationProps {
   currentTab: NavTab;
@@ -53,6 +54,12 @@ export const Navigation: React.FC<NavigationProps> = ({
       badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 animate-pulse',
     },
     {
+      id: 'monitoring' as NavTab,
+      label: 'Monitoring',
+      icon: TrendingUp,
+      badge: null,
+    },
+    {
       id: 'endpoints' as NavTab,
       label: 'Regional Nodes',
       icon: Server,
@@ -64,7 +71,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   // Dynamic tabs: Dashboard & Regional Nodes always present;
   // Speed Test or Ping Monitoring only shows when currently launched.
   const navItems = allNavItems.filter((item) => {
-    if (item.id === 'dashboard' || item.id === 'endpoints') {
+    if (item.id === 'dashboard' || item.id === 'monitoring' || item.id === 'endpoints') {
       return true;
     }
     if (currentTab === 'speedtest' && item.id === 'speedtest') {
