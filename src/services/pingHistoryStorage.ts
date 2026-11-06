@@ -14,6 +14,7 @@
  */
 
 import { type PingSession, type RegionId, type RegionPingResult } from '../types/ping';
+import { reportSessionToMonitoring } from './monitoringApi';
 import { db, auth } from '../lib/firebase';
 import { doc, setDoc, deleteDoc, getDocs, collection, query, orderBy, limit } from 'firebase/firestore';
 
@@ -197,6 +198,9 @@ export async function persistPingSession(newSession: PingSession): Promise<PingS
   const currentLocal = loadStoredPingSessions();
   const updatedLocal = mergeSessions([newSession], currentLocal);
   saveToLocalStorage(updatedLocal);
+
+  // Long-term history + anomaly detection (server side). Never blocks or breaks the test.
+  void reportSessionToMonitoring('ping', newSession);
 
   // 2. Server API update (non-blocking, but tracked so that "Clear All" waits for it)
   trackWrite(
