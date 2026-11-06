@@ -103,6 +103,28 @@ export function publishPingAlert(input: PublishPingAlertInput): void {
   ensureMounted();
 }
 
+/** Anomaly found by the history-based detector (server side): shown in the same panel as ping timeout alerts. */
+export function publishAnomalyAlert(input: {
+  regionId: string; level: 'warning' | 'critical'; title: string; message: string; emailStatus?: string;
+}): void {
+  const at = new Date().toISOString();
+  const emailNote =
+    input.emailStatus === 'sent' ? 'An email notification has been sent to the operations team.' :
+    input.emailStatus === 'skipped_cooldown' ? 'An email was already sent recently for this region and metric.' :
+    input.emailStatus === 'failed' ? 'The email notification could not be sent. Please check the email settings.' : null;
+  const item: AlertItem = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    level: input.level, regionId: input.regionId,
+    title: `${input.level === 'critical' ? 'CRITICAL anomaly' : 'Anomaly'}: ${input.title}`,
+    message: input.message, emailNote, timeouts: 0, total: 0, at,
+  };
+  if (items.some((i) => i.regionId === item.regionId && i.message === item.message)) return;
+  items = [item, ...items].slice(0, MAX_ITEMS);
+  persist();
+  emit();
+  ensureMounted();
+}
+
 function dismiss(id: string): void {
   items = items.filter((i) => i.id !== id);
   persist();
