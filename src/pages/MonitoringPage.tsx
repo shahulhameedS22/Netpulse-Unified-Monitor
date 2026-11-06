@@ -5,10 +5,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle2, Database, Download,
-  Info, Loader2, Mail, RefreshCw, TrendingUp,
+  Info, Loader2, Mail, RefreshCw, Timer, TrendingUp,
 } from 'lucide-react';
 import {
-  acknowledgeAnomaly, downloadCsv, fetchAnomalies, fetchCompare, fetchConfig, fetchHistory,
+  acknowledgeAnomaly, csvUrl, fetchAnomalies, fetchCompare, fetchConfig, fetchHistory,
   type Anomaly, type CompareResponse, type HistoryResponse, type MetricKind, type MonitorConfig, type RangeKey,
 } from '../services/monitoringApi';
 
@@ -188,20 +188,18 @@ export const MonitoringPage: React.FC = () => {
             </span>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">History, Comparison &amp; Anomaly Alerts</h1>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              Only completed ping and speed tests run by your team are recorded. Each new result is compared with that
-              region's previous measurements, and unusual values raise in-app and email alerts.
+              Every speed and ping result is kept as history. Each new result is compared with what that region normally
+              looks like, and unusual values raise an alert.
             </p>
           </div>
           <div className="flex flex-wrap lg:flex-col gap-2 text-xs font-mono">
             <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.storage.persistent ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/40 text-amber-300 bg-amber-500/10'}`}>
               <Database className="w-3.5 h-3.5" />
-              {config ? (config.storage.persistent
-                ? `History: Firestore - ${config.storage.retentionDays} day retention`
-                : 'History: Firestore not configured') : 'History: checking...'}
+              {config ? `History: ${config.storage.backend === 'redis' ? 'Redis' : 'local file'} - keeps ${config.storage.retentionDays} days${config.storage.persistent ? '' : ' (temporary)'}` : 'History: checking...'}
             </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-300 bg-cyan-500/10">
-              <Activity className="w-3.5 h-3.5" />
-              Manual team tests only
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.scheduler.intervalMin || config?.scheduler.lastRunAt ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-600 text-slate-300 bg-slate-800/60'}`}>
+              <Timer className="w-3.5 h-3.5" />
+              {config?.scheduler.intervalMin ? `Auto ping every ${config.scheduler.intervalMin} min` : config?.scheduler.lastRunAt ? `Last auto run ${fmtWhen(config.scheduler.lastRunAt)}` : 'Auto monitoring: off'}
             </span>
             <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.email.configured ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-600 text-slate-300 bg-slate-800/60'}`}>
               <Mail className="w-3.5 h-3.5" />
@@ -244,9 +242,9 @@ export const MonitoringPage: React.FC = () => {
           <button type="button" onClick={() => setTick((n) => n + 1)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-200 hover:bg-slate-800/80 cursor-pointer">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <button type="button" onClick={() => { void downloadCsv(kind, range).catch((e: Error) => setError(e.message)); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-200 hover:bg-slate-800/80">
+          <a href={csvUrl(kind, range)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-200 hover:bg-slate-800/80">
             <Download className="w-3.5 h-3.5" /> CSV
-          </button>
+          </a>
         </div>
       </div>
 
@@ -316,7 +314,7 @@ export const MonitoringPage: React.FC = () => {
             <Info className="w-4 h-4 mt-0.5 shrink-0 text-cyan-400" />
             <span>
               No {kind} history in this period yet. Run a {kind === 'ping' ? 'Ping Monitoring' : 'Speed Test'} session
-              and the results appear here.
+              {kind === 'ping' ? ', or turn on automatic monitoring (MONITOR_INTERVAL_MIN)' : ''} and the results appear here.
             </span>
           </div>
         )}
