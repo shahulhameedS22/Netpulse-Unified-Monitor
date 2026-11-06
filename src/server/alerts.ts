@@ -71,7 +71,7 @@ function alertCooldownSeconds(): number {
   const m = Number(process.env.ALERT_EMAIL_COOLDOWN_MIN);
   return (Number.isFinite(m) && m >= 1 && m <= 1440 ? Math.round(m) : 30) * 60;
 }
-function alertRecipients(): string[] {
+export function alertRecipients(): string[] {
   return (process.env.ALERT_EMAIL_TO || '')
     .split(',')
     .map((s) => s.trim())
@@ -196,7 +196,7 @@ function buildAlertEmail(region: RegionId, result: any, alert: PingAlert, isTest
   return { subject, html, text };
 }
 
-async function sendEmailViaResend(to: string[], mail: { subject: string; html: string; text: string }): Promise<'sent' | 'not_configured' | 'failed'> {
+export async function sendEmailViaResend(to: string[], mail: { subject: string; html: string; text: string }): Promise<'sent' | 'not_configured' | 'failed'> {
   const key = process.env.RESEND_API_KEY?.trim();
   if (!key || !to.length) return 'not_configured';
   const controller = new AbortController();
