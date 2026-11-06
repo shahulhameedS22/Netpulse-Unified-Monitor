@@ -2,7 +2,6 @@
  * Client for the history / comparison / anomaly API (see src/server/monitoring.ts).
  */
 import { publishAnomalyAlert } from './alertCenter';
-import { auth } from '../lib/firebase';
 
 export type MetricKind = 'ping' | 'speed';
 export type RangeKey = '1h' | '6h' | '24h' | '7d' | '30d' | '90d';
@@ -30,22 +29,16 @@ export interface CompareResponse {
   current: { from: number; to: number }; previous: { from: number; to: number }; rows: CompareRow[];
 }
 export interface MonitorConfig {
-  storage: { backend: 'firestore' | 'unavailable'; persistent: boolean; retentionDays: number; note?: string };
+  storage: { backend: 'redis' | 'file'; persistent: boolean; retentionDays: number; note?: string };
   detector: { lookbackDays: number; minBaseline: number; zWarn: number; zCrit: number; minChangePct: number; lossWarnPct: number; lossCritPct: number };
   metrics: Record<MetricKind, Record<string, MetricDef>>;
   regions: string[];
   email: { configured: boolean; minSeverity: 'warning' | 'critical'; cooldownMin: number };
-}
-
-async function authHeaders(extra: Record<string, string> = {}): Promise<Record<string, string>> {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Please sign in again to access network analytics.');
-  const token = await user.getIdToken();
-  return { Accept: 'application/json', 'X-Firebase-Auth': token, ...extra };
+  scheduler: { intervalMin: number | null; lastRunAt: number | null; lastResult: Array<{ region: string; status: string; detail?: string }> | null };
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: await authHeaders(), signal: AbortSignal.timeout(15000) });
+  const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body?.ok === false) throw new Error(body?.error || `Request failed (HTTP ${res.status})`);
   return body as T;
@@ -60,28 +53,10 @@ export const fetchCompare = (kind: MetricKind, range: RangeKey, mode: 'previous'
   getJson<CompareResponse>(`/api/metrics/compare?${qs({ kind, range, mode, region })}`);
 export const fetchAnomalies = (range: RangeKey) =>
   getJson<{ openCount: number; items: Anomaly[] }>(`/api/metrics/anomalies?${qs({ range })}`);
-export async function downloadCsv(kind: MetricKind, range: RangeKey): Promise<void> {
-  const res = await fetch(`/api/metrics/export.csv?${qs({ kind, range })}`, {
-    headers: await authHeaders(),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`CSV export failed (HTTP ${res.status})`);
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `netpulse-${kind}-history.csv`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
+export const csvUrl = (kind: MetricKind, range: RangeKey) => `/api/metrics/export.csv?${qs({ kind, range })}`;
 
 export async function acknowledgeAnomaly(id: string): Promise<void> {
-  const res = await fetch(`/api/metrics/anomalies/${encodeURIComponent(id)}/ack`, {
-    method: 'POST',
-    headers: await authHeaders(),
-  });
+  const res = await fetch(`/api/metrics/anomalies/${encodeURIComponent(id)}/ack`, { method: 'POST' });
   if (!res.ok) throw new Error(`Could not acknowledge (HTTP ${res.status})`);
 }
 
@@ -94,16 +69,12 @@ export async function reportSessionToMonitoring(kind: MetricKind, session: unkno
   try {
     const res = await fetch('/api/metrics/ingest', {
       method: 'POST',
-      headers: await authHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       // per-packet details are not needed for history, so they are left out to keep the request small
       body: JSON.stringify({ kind, session }, (key, value) => (key === 'packets' ? undefined : value)),
       signal: AbortSignal.timeout(15000),
     });
-    if (!res.ok) {
-      const failure = await res.json().catch(() => ({}));
-      console.warn('[monitoring] analytics ingest was rejected:', failure?.error || `HTTP ${res.status}`);
-      return;
-    }
+    if (!res.ok) return;
     const body = await res.json();
     for (const a of (body?.anomalies || []) as Anomaly[]) {
       publishAnomalyAlert({ regionId: a.region, level: a.severity, title: `${a.label} anomaly`, message: a.message, emailStatus: a.emailStatus });
