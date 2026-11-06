@@ -14,6 +14,7 @@
  */
 
 import { type SpeedTestSession } from '../types/speedSession';
+import { reportSessionToMonitoring } from './monitoringApi';
 import { db, auth } from '../lib/firebase';
 import { doc, setDoc, deleteDoc, getDocs, collection, query, orderBy, limit } from 'firebase/firestore';
 
@@ -172,6 +173,9 @@ export async function persistSpeedSession(newSession: SpeedTestSession): Promise
   const currentLocal = loadStoredSpeedSessions();
   const updatedLocal = mergeSessions([newSession], currentLocal);
   saveToLocalStorage(updatedLocal);
+
+  // Long-term history + anomaly detection (server side). Never blocks or breaks the test.
+  void reportSessionToMonitoring('speed', newSession);
 
   // 2. Server API update (non-blocking, but tracked so that "Clear All" waits for it)
   trackWrite(
