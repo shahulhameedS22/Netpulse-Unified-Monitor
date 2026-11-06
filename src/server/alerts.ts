@@ -10,15 +10,42 @@
  *   RESEND_API_KEY, ALERT_EMAIL_TO (comma separated), ALERT_EMAIL_FROM (optional),
  *   ALERT_CONSECUTIVE_TIMEOUTS (optional, default 5), ALERT_EMAIL_COOLDOWN_MIN (optional, default 30),
  *   ALERT_DASHBOARD_URL (optional, link shown in the email)
- *   Cooldown state is stored in Firestore using the server service account.
+ *   Storage for the cooldown: UPSTASH_REDIS_REST_URL / _TOKEN (or KV_REST_API_URL / _TOKEN)
  */
 import type { Request, Response, Router } from 'express';
-import { firestoreCreate, firestoreDelete, firestoreGet } from './firestoreRest.js';
 
 export type RegionId = 'IN-DC01' | 'IN-DC02' | 'LK-DC01' | 'SG-DC01';
 const FIXED_TARGET_IP = '8.8.8.8';
 
-const PING_ALERT_COOLDOWNS = 'netpulse_ping_alert_cooldowns';
+type RedisCmd = (string | number)[];
+function redisConfig(): { url: string; token: string } | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
+}
+async function redisPipeline(cmds: RedisCmd[]): Promise<any[]> {
+  const cfg = redisConfig();
+  if (!cfg) throw new Error('STORAGE_NOT_CONFIGURED');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const r = await fetch(`${cfg.url}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(cmds),
+      signal: controller.signal,
+    });
+    if (!r.ok) throw new Error(`Storage HTTP ${r.status}`);
+    const arr = (await r.json()) as Array<{ result?: any; error?: string }>;
+    return arr.map((x) => {
+      if (x.error) throw new Error(x.error);
+      return x.result;
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const mailKey = (r: string) => `ping:alertmail:${r}`;
 
 export type AlertEmailStatus = 'not_required' | 'sent' | 'skipped_cooldown' | 'not_configured' | 'failed';
 export interface PingAlert {
@@ -204,37 +231,20 @@ export async function sendEmailViaResend(to: string[], mail: { subject: string; 
 export async function sendCriticalAlertEmail(region: RegionId, result: any, alert: PingAlert): Promise<AlertEmailStatus> {
   const to = alertRecipients();
   if (!process.env.RESEND_API_KEY?.trim() || !to.length) return 'not_configured';
-
   let acquired = false;
   try {
-    const now = Date.now();
-    const existing = await firestoreGet(PING_ALERT_COOLDOWNS, region);
-    if (existing) {
-      const expiresAt = typeof existing.expiresAt === 'string' ? Date.parse(existing.expiresAt) : Number(existing.expiresAt);
-      if (Number.isFinite(expiresAt) && expiresAt > now) return 'skipped_cooldown';
-      await firestoreDelete(PING_ALERT_COOLDOWNS, region);
-    }
-    try {
-      await firestoreCreate(PING_ALERT_COOLDOWNS, region, {
-        region,
-        createdAt: now,
-        expiresAt: new Date(now + alertCooldownSeconds() * 1000),
-      });
-      acquired = true;
-    } catch (lockError: any) {
-      if (String(lockError?.message || '').includes('ALREADY_EXISTS')) return 'skipped_cooldown';
-      throw lockError;
-    }
-
+    const [set] = await redisPipeline([['SET', mailKey(region), '1', 'NX', 'EX', alertCooldownSeconds()]]);
+    if (set !== 'OK') return 'skipped_cooldown';
+    acquired = true;
     const status = await sendEmailViaResend(to, buildAlertEmail(region, result, alert));
     if (status !== 'sent') {
-      await firestoreDelete(PING_ALERT_COOLDOWNS, region).catch(() => undefined);
+      await redisPipeline([['DEL', mailKey(region)]]).catch(() => undefined); // let the next incident try again
       return status === 'not_configured' ? 'not_configured' : 'failed';
     }
     return 'sent';
   } catch (err: any) {
-    console.error('[alert] could not process alert email:', err?.message || err);
-    if (acquired) await firestoreDelete(PING_ALERT_COOLDOWNS, region).catch(() => undefined);
+    console.error('[alert] could not process alert email:', err?.message);
+    if (acquired) await redisPipeline([['DEL', mailKey(region)]]).catch(() => undefined);
     return 'failed';
   }
 }
