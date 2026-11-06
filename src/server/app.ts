@@ -15,6 +15,7 @@ import dotenv from 'dotenv';
 // NOTE: relative imports end in .js (not .ts): the Vercel function runs as an ES module and cannot load .ts files.
 import { dispatchSpeedTestRoute } from './speedTestApi.js';
 import { buildAlert, sendCriticalAlertEmail, registerAlertRoutes } from './alerts.js';
+import { registerMonitoringRoutes, recordSamples, sampleFromPingResult, schedulerState } from './monitoring.js';
 
 dotenv.config();
 
@@ -481,6 +482,11 @@ async function agentIngest(req: Request, res: Response): Promise<void> {
     const alert = buildAlert(clean.result);
     if (alert.level === 'critical') alert.emailStatus = await sendCriticalAlertEmail(region, clean.result, alert);
     clean.result.alert = alert;
+    // Scheduled (automatic) test: keep the measurement in the long-term history and check it for anomalies.
+    if (rec.scheduled) {
+      const sample = sampleFromPingResult(region, clean.result, 'scheduled');
+      if (sample) await recordSamples([sample]).catch((e) => console.error('[history] could not record scheduled result:', e?.message || e));
+    }
     await redisPipeline([
       ['SET', PK.res(region, requestId), JSON.stringify(clean.result), 'EX', PUSH_RESULT_TTL_S],
       ['DEL', PK.req(region)],
@@ -492,6 +498,62 @@ async function agentIngest(req: Request, res: Response): Promise<void> {
     console.error('[ingest] storage error:', err?.message || err);
     res.status(500).json({ ok: false, error: 'Result storage is temporarily unavailable.' });
   }
+}
+
+/**
+ * One automatic monitoring round (no browser needed).
+ *  - direct regions: asks the regional ping daemon for a ping test and stores the result right away
+ *  - push-agent regions: queues a test flagged "scheduled"; the result is stored when the agent reports it
+ * Triggered by the built-in timer (MONITOR_INTERVAL_MIN, see server.ts) or by GET/POST /api/monitor/run (cron).
+ */
+export async function runScheduledProbes(): Promise<Array<{ region: string; status: string; detail?: string }>> {
+  const envCount = Number(process.env.MONITOR_PING_COUNT);
+  const count = Number.isInteger(envCount) && envCount >= MIN_PING_COUNT && envCount <= MAX_PING_COUNT ? envCount : 10;
+  const results: Array<{ region: string; status: string; detail?: string }> = [];
+  const samples: NonNullable<ReturnType<typeof sampleFromPingResult>>[] = [];
+
+  await Promise.all(
+    ALLOWED_REGIONS.map(async (regionId) => {
+      try {
+        const endpointUrl = getRegionalEndpointUrl(regionId);
+        if (endpointUrl) {
+          const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Session-ID': `sched_${Date.now()}` };
+          if (process.env.REGIONAL_API_KEY) headers['Authorization'] = `Bearer ${process.env.REGIONAL_API_KEY}`;
+          const response = await fetch(`${endpointUrl.replace(/\/+$/, '')}/ping`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ targetIp: FIXED_TARGET_IP, count, timeoutMs: 25000, regionId }),
+            signal: AbortSignal.timeout(PING_TIMEOUT_MS),
+          });
+          if (!response.ok) {
+            results.push({ region: regionId, status: 'error', detail: `Regional agent answered HTTP ${response.status}` });
+            return;
+          }
+          const sample = sampleFromPingResult(regionId, await response.json(), 'scheduled');
+          if (sample) samples.push(sample);
+          results.push({ region: regionId, status: sample ? 'recorded' : 'no_data' });
+        } else if (isPushRegion(regionId)) {
+          if (!redisConfig()) { results.push({ region: regionId, status: 'skipped', detail: 'Redis queue not configured' }); return; }
+          const [seen, pending, cool] = await redisPipeline([['GET', PK.seen(regionId)], ['GET', PK.req(regionId)], ['EXISTS', PK.cool(regionId)]]);
+          if (!seen || Date.now() - Number(seen) > AGENT_STALE_MS) { results.push({ region: regionId, status: 'agent_offline' }); return; }
+          if (pending) { results.push({ region: regionId, status: 'already_queued' }); return; }
+          if (Number(cool) > 0) { results.push({ region: regionId, status: 'cooldown' }); return; }
+          const requestId = crypto.randomUUID();
+          await redisPipeline([['SET', PK.req(regionId), JSON.stringify({ requestId, status: 'pending', count, scheduled: true, createdAt: Date.now() }), 'EX', PUSH_REQUEST_TTL_S]]);
+          results.push({ region: regionId, status: 'queued', detail: 'Result is stored when the agent reports back' });
+        } else {
+          results.push({ region: regionId, status: 'skipped', detail: 'No direct endpoint or push-agent key configured for this region' });
+        }
+      } catch (err: any) {
+        results.push({ region: regionId, status: 'error', detail: formatNetworkError(err) });
+      }
+    })
+  );
+
+  if (samples.length) await recordSamples(samples);
+  schedulerState.lastRunAt = Date.now();
+  schedulerState.lastResult = results;
+  return results;
 }
 
 export function createApiApp(): Application {
@@ -518,6 +580,13 @@ export function createApiApp(): Application {
 
   // Timeout alerts: POST /api/alerts/test-email (administrator key required)
   registerAlertRoutes(apiRouter);
+
+  // History, comparison, anomaly detection and scheduled monitoring
+  registerMonitoringRoutes(apiRouter, {
+    runProbes: runScheduledProbes,
+    safeCompare,
+    rateLimiter: healthRateLimiter as any,
+  });
 
   /**
    * Admin Account Setup Key Verification
@@ -931,7 +1000,9 @@ export function createApiApp(): Application {
       req.path.startsWith('/auth') ||
       req.path.startsWith('/health') ||
       req.path.startsWith('/agent') ||
-      req.path.startsWith('/alerts')
+      req.path.startsWith('/alerts') ||
+      req.path.startsWith('/metrics') ||
+      req.path.startsWith('/monitor')
     ) {
       return apiRouter(req, res, next);
     }
