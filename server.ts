@@ -10,7 +10,8 @@
 import express, { type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createApiApp, getRegionalEndpointUrl } from './src/server/app.ts';
+import { createApiApp, getRegionalEndpointUrl, runScheduledProbes } from './src/server/app.ts';
+import { schedulerState } from './src/server/monitoring.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +42,19 @@ export async function startServer() {
     app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
+  }
+
+  // Automatic monitoring: run a probe round every MONITOR_INTERVAL_MIN minutes (0 / unset = off).
+  // On Vercel (serverless) use a cron job that calls GET /api/monitor/run instead - see README.
+  const intervalMin = Number(process.env.MONITOR_INTERVAL_MIN);
+  if (Number.isFinite(intervalMin) && intervalMin >= 1) {
+    schedulerState.intervalMin = intervalMin;
+    const round = () =>
+      runScheduledProbes()
+        .then((r) => console.log('[monitor] round finished:', r.map((x) => `${x.region}=${x.status}`).join(' ')))
+        .catch((e) => console.error('[monitor] round failed:', e?.message || e));
+    setTimeout(round, 15_000); // first round shortly after start
+    setInterval(round, intervalMin * 60_000);
   }
 
   app.listen(PORT, '0.0.0.0', () => {
