@@ -58,6 +58,8 @@ interface Backend {
   range(col: string, from: number, to: number, limit: number): Promise<any[]>;
   add(col: string, t: number, item: any, id: string): Promise<void>;
   prune(col: string, before: number): Promise<void>;
+  /** timestamp of the oldest record in a collection, or null when it is empty */
+  first(col: string): Promise<number | null>;
 }
 
 function redisConfig(): { url: string; token: string } | null {
@@ -102,6 +104,10 @@ const redisBackend: Backend = {
   },
   async prune(col, before) {
     await redis([['ZREMRANGEBYSCORE', `nm:${col}`, '-inf', before]]);
+  },
+  async first(col) {
+    const [rows] = await redis([['ZRANGE', `nm:${col}`, 0, 0, 'WITHSCORES']]);
+    return Array.isArray(rows) && rows.length >= 2 ? Number(rows[1]) : null;
   },
 };
 
@@ -165,6 +171,10 @@ const fileBackend: Backend = {
       scheduleWrite();
     }
   },
+  async first(col) {
+    const arr = loadFile()[col] || [];
+    return arr.length ? arr[0].t : null;
+  },
 };
 
 export function backend(): Backend {
@@ -203,6 +213,14 @@ export async function getSamples(
   const b = backend();
   const parts = await Promise.all(regions.map((r) => b.range(sampleCol(kind, r), from, to, limitPerRegion)));
   return parts.flat().sort((a, c) => a.t - c.t);
+}
+
+/** When did history for this kind/region start? (null = nothing stored yet) */
+export async function firstSampleTime(kind: MetricKind, region: string | 'all'): Promise<number | null> {
+  const regions = region === 'all' ? [...REGIONS] : [region];
+  const b = backend();
+  const times = (await Promise.all(regions.map((r) => b.first(sampleCol(kind, r))))).filter((t): t is number => t !== null);
+  return times.length ? Math.min(...times) : null;
 }
 
 export async function addAnomaly(a: StoredAnomaly): Promise<void> {
