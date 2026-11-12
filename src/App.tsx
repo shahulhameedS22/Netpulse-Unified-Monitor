@@ -3,7 +3,7 @@
  * Combines Network Speed Test & Ping Monitoring into a single secure platform.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { Navigation, NavTab } from './components/Navigation';
@@ -19,14 +19,42 @@ const MainAppContent: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [speedTestRunning, setSpeedTestRunning] = useState(false);
   const [pingTestRunning, setPingTestRunning] = useState(false);
+  // "Done" = a test finished while the person was on another tab and has not been looked at yet.
+  const [speedTestDone, setSpeedTestDone] = useState(false);
+  const [pingTestDone, setPingTestDone] = useState(false);
 
-  // "Next test" attention animation: plays only for the FIRST completed test of a
-  // visit, whichever app it was in. Held in memory only (not localStorage), so a
-  // refresh, closing the tab or leaving the site makes it play once again.
+  const currentTabRef = useRef<NavTab>('dashboard');
+  const speedWasRunningRef = useRef(false);
+  const pingWasRunningRef = useRef(false);
+
   const [nextStepAnimationUsed, setNextStepAnimationUsed] = useState(false);
   const markNextStepAnimationUsed = useCallback(() => setNextStepAnimationUsed(true), []);
 
-  // Loading screen while verifying persistent session
+  const selectTab = useCallback((tab: NavTab) => {
+    currentTabRef.current = tab;
+    setCurrentTab(tab);
+    if (tab === 'speedtest') setSpeedTestDone(false); // results are being looked at now
+    if (tab === 'ping') setPingTestDone(false);
+  }, []);
+
+  // The pages report running / stopped. Both state changes are made together, so a test that
+  // finishes while the person is elsewhere is never lost between two renders.
+  const handleSpeedRunning = useCallback((running: boolean) => {
+    setSpeedTestRunning(running);
+    if (!running && speedWasRunningRef.current && currentTabRef.current !== 'speedtest') setSpeedTestDone(true);
+    speedWasRunningRef.current = running;
+  }, []);
+  const handlePingRunning = useCallback((running: boolean) => {
+    setPingTestRunning(running);
+    if (!running && pingWasRunningRef.current && currentTabRef.current !== 'ping') setPingTestDone(true);
+    pingWasRunningRef.current = running;
+  }, []);
+
+  // A test page stays mounted (just hidden) while its test runs or has unseen results.
+  // Unmounting it would stop the test and lose its live state.
+  const mountSpeed = currentTab === 'speedtest' || speedTestRunning || speedTestDone;
+  const mountPing = currentTab === 'ping' || pingTestRunning || pingTestDone;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0b1329] flex flex-col items-center justify-center p-4">
@@ -56,37 +84,43 @@ const MainAppContent: React.FC = () => {
       {/* Navigation Header */}
       <Navigation
         currentTab={currentTab}
-        onSelectTab={setCurrentTab}
+        onSelectTab={selectTab}
         speedTestRunning={speedTestRunning}
         pingTestRunning={pingTestRunning}
+        speedTestDone={speedTestDone}
+        pingTestDone={pingTestDone}
       />
 
       {/* Main App Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {currentTab === 'dashboard' && (
           <UnifiedDashboardPage
-            onSelectTab={setCurrentTab}
+            onSelectTab={selectTab}
             speedTestRunning={speedTestRunning}
             pingTestRunning={pingTestRunning}
           />
         )}
 
-        {currentTab === 'speedtest' && (
-          <SpeedTestPage
-            onTestRunningChange={setSpeedTestRunning}
-            onSelectTab={setCurrentTab}
-            nextStepAnimationUsed={nextStepAnimationUsed}
-            onNextStepShown={markNextStepAnimationUsed}
-          />
+        {mountSpeed && (
+          <div className={currentTab === 'speedtest' ? '' : 'hidden'}>
+            <SpeedTestPage
+              onTestRunningChange={handleSpeedRunning}
+              onSelectTab={selectTab}
+              nextStepAnimationUsed={nextStepAnimationUsed}
+              onNextStepShown={markNextStepAnimationUsed}
+            />
+          </div>
         )}
 
-        {currentTab === 'ping' && (
-          <PingMonitorPage
-            onTestRunningChange={setPingTestRunning}
-            onSelectTab={setCurrentTab}
-            nextStepAnimationUsed={nextStepAnimationUsed}
-            onNextStepShown={markNextStepAnimationUsed}
-          />
+        {mountPing && (
+          <div className={currentTab === 'ping' ? '' : 'hidden'}>
+            <PingMonitorPage
+              onTestRunningChange={handlePingRunning}
+              onSelectTab={selectTab}
+              nextStepAnimationUsed={nextStepAnimationUsed}
+              onNextStepShown={markNextStepAnimationUsed}
+            />
+          </div>
         )}
 
         {currentTab === 'monitoring' && <MonitoringPage />}
