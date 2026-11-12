@@ -65,6 +65,16 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
   const [selectedDetailSession, setSelectedDetailSession] = useState<SpeedTestSession | null>(null);
   const sessionStartTimeRef = useRef<string | null>(null);
 
+  // When "Session History" is opened, scroll down to the history panel.
+  const historySectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!showHistory) return;
+    const id = requestAnimationFrame(() => {
+      historySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [showHistory]);
+
   const isCancelledRef = useRef<boolean>(false);
   const activeIndexRef = useRef<number | null>(null);
   const testSectionRef = useRef<HTMLDivElement>(null);
@@ -584,7 +594,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
 
       {/* Speed Test History Drawer */}
       {showHistory && (
-        <section className="bg-[#141e33] border border-cyan-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
+        <section ref={historySectionRef} className="scroll-mt-24 bg-[#141e33] border border-cyan-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
           <div className="flex items-center justify-between pb-3 border-b border-slate-700 flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
               <History className="w-4 h-4 text-cyan-400" />
