@@ -90,6 +90,35 @@ const fmt = (v: number, def: MetricDef) => `${round(v, def.decimals)} ${def.unit
 
 /* ------------------------------ detection ------------------------------ */
 
+export interface BaselineInfo {
+  base: number;       // the region's "normal" value (median)
+  scale: number;      // typical spread
+  warnDiff: number;   // how far in the BAD direction a value must move to raise a warning
+  critDiff: number;   // ... to raise a critical alert
+}
+
+/** Single source of truth for "what counts as unusual" - used by the detector AND by the UI limits. */
+export function baselineInfo(history: number[], def: MetricDef, cfg: DetectorConfig = detectorConfig()): BaselineInfo | null {
+  if (history.length < cfg.minBaseline) return null;
+  const base = median(history);
+  const mad = median(history.map((h) => Math.abs(h - base)));
+  const scale = Math.max(mad * 1.4826, Math.abs(base) * 0.05, def.floor);
+  const ref = Math.max(Math.abs(base), def.floor);
+  return {
+    base,
+    scale,
+    warnDiff: Math.max(cfg.zWarn * scale, (cfg.minChangePct / 100) * ref),
+    critDiff: Math.max(cfg.zCrit * scale, ((cfg.minChangePct * 2) / 100) * ref),
+  };
+}
+
+/** The value at which an alert would start (warning / critical) for a metric. */
+export function alertLimits(info: BaselineInfo, def: MetricDef): { warning: number; critical: number } {
+  const sign = def.bad === 'high' ? 1 : -1;
+  const clamp = (v: number) => (def.bad === 'low' ? Math.max(v, 0) : v);
+  return { warning: clamp(info.base + sign * info.warnDiff), critical: clamp(info.base + sign * info.critDiff) };
+}
+
 export function detectAnomalies(sample: Sample, baseline: Sample[], cfg: DetectorConfig = detectorConfig()): StoredAnomaly[] {
   const defs = METRICS[sample.kind];
   const out: StoredAnomaly[] = [];
@@ -108,15 +137,13 @@ export function detectAnomalies(sample: Sample, baseline: Sample[], cfg: Detecto
     let devPct: number | null = null;
 
     // (a) statistical check against the region's own normal
-    if (history.length >= cfg.minBaseline) {
-      base = median(history);
-      const mad = median(history.map((h) => Math.abs(h - base!)));
-      const scale = Math.max(mad * 1.4826, Math.abs(base) * 0.05, def.floor);
-      const diff = def.bad === 'high' ? value - base : base - value; // positive = worse
-      const z = diff / scale;
-      devPct = (diff / Math.max(Math.abs(base), def.floor)) * 100;
-      if (z >= cfg.zWarn && devPct >= cfg.minChangePct) severity = 'warning';
-      if (z >= cfg.zCrit && devPct >= cfg.minChangePct * 2) severity = 'critical';
+    const info = baselineInfo(history, def, cfg);
+    if (info) {
+      base = info.base;
+      const diff = def.bad === 'high' ? value - info.base : info.base - value; // positive = worse
+      devPct = (diff / Math.max(Math.abs(info.base), def.floor)) * 100;
+      if (diff >= info.warnDiff) severity = 'warning';
+      if (diff >= info.critDiff) severity = 'critical';
       // Packet loss: "critical" is decided only by the fixed limits below (a jump from 0% to 6% is a warning, not an emergency)
       if (metric === 'packetLossPercent' && severity === 'critical') severity = 'warning';
     }
@@ -162,9 +189,67 @@ export function detectAnomalies(sample: Sample, baseline: Sample[], cfg: Detecto
   return out;
 }
 
+/** Per region + metric: is the detector active yet, what is normal, where does an alert start, how does the latest result look? */
+export interface DetectionStatusRow {
+  region: string;
+  metric: string;
+  label: string;
+  unit: string;
+  bad: 'high' | 'low';
+  samples: number;               // results inside the look-back window
+  needed: number;                // results needed before the statistical check starts
+  state: 'no-data' | 'learning' | 'active';
+  normal: number | null;         // median
+  warningLimit: number | null;
+  criticalLimit: number | null;
+  latest: number | null;
+  latestAt: number | null;
+  latestState: 'normal' | 'warning' | 'critical' | null;
+}
+
+export function detectionStatus(samples: Sample[], kind: MetricKind, regions: string[], cfg: DetectorConfig = detectorConfig()): DetectionStatusRow[] {
+  const rows: DetectionStatusRow[] = [];
+  for (const region of regions) {
+    for (const [metric, def] of Object.entries(METRICS[kind])) {
+      const mine = samples.filter((s) => s.region === region && typeof s.m[metric] === 'number'); // oldest -> newest
+      const latest = mine.length ? mine[mine.length - 1] : null;
+      // the baseline for the latest value is everything before it
+      const history = mine.slice(0, -1).map((s) => s.m[metric]);
+      const info = baselineInfo(history, def, cfg);
+      const limits = info ? alertLimits(info, def) : null;
+      let latestState: DetectionStatusRow['latestState'] = null;
+      if (latest) {
+        const v = latest.m[metric];
+        latestState = 'normal';
+        if (info) {
+          const diff = def.bad === 'high' ? v - info.base : info.base - v;
+          if (diff >= info.critDiff && metric !== 'packetLossPercent') latestState = 'critical';
+          else if (diff >= info.warnDiff) latestState = 'warning';
+        }
+        if (metric === 'packetLossPercent') {
+          if (v >= cfg.lossCritPct) latestState = 'critical';
+          else if (v >= cfg.lossWarnPct && latestState === 'normal') latestState = 'warning';
+        }
+      }
+      rows.push({
+        region, metric, label: def.label, unit: def.unit, bad: def.bad,
+        samples: history.length, needed: cfg.minBaseline,
+        state: !latest ? 'no-data' : info ? 'active' : 'learning',
+        normal: info ? round(info.base, 3) : null,
+        warningLimit: limits ? round(limits.warning, 3) : null,
+        criticalLimit: limits ? round(limits.critical, 3) : null,
+        latest: latest ? latest.m[metric] : null,
+        latestAt: latest ? latest.t : null,
+        latestState,
+      });
+    }
+  }
+  return rows;
+}
+
 /* ------------------------------ comparison ------------------------------ */
 
-export interface Stats { n: number; avg: number; min: number; max: number; p50: number; p95: number }
+export interface Stats { n: number; avg: number; min: number; max: number; p50: number; p5: number; p95: number }
 
 export function stats(values: number[]): Stats | null {
   if (!values.length) return null;
@@ -175,6 +260,7 @@ export function stats(values: number[]): Stats | null {
     min: Math.min(...values),
     max: Math.max(...values),
     p50: median(values),
+    p5: percentile(values, 0.05),
     p95: percentile(values, 0.95),
   };
 }
@@ -186,6 +272,8 @@ export interface CompareRow {
   unit: string;
   current: Stats | null;
   previous: Stats | null;
+  worstNow: number | null;           // the bad end of the current period: highest latency/loss, LOWEST speed (5% worst case)
+  worstBefore: number | null;
   deltaPct: number | null;           // change of the average, current vs previous
   verdict: 'better' | 'worse' | 'stable' | 'no-data';
 }
@@ -215,7 +303,8 @@ export function comparePeriods(
         const worse = def.bad === 'high' ? diff > 0 : diff < 0;
         verdict = Math.abs(deltaPct) < stableBandPct || Math.abs(diff) < def.floor ? 'stable' : worse ? 'worse' : 'better';
       }
-      rows.push({ region, metric, label: def.label, unit: def.unit, current: c, previous: p, deltaPct, verdict });
+      const worst = (st: Stats | null) => (st ? (def.bad === 'high' ? st.p95 : st.p5) : null);
+      rows.push({ region, metric, label: def.label, unit: def.unit, current: c, previous: p, worstNow: worst(c), worstBefore: worst(p), deltaPct, verdict });
     }
   }
   return rows;
