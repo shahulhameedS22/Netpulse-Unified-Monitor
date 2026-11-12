@@ -14,10 +14,10 @@
 import type { Request, Response, Router } from 'express';
 import crypto from 'crypto';
 import {
-  addAnomaly, addSample, ackAnomaly, getAckedIds, getAnomalies, getSamples, pruneOld, storageInfo, retentionDays, REGIONS,
+  addAnomaly, addSample, ackAnomaly, getAckedIds, getAnomalies, getSamples, pruneOld, storageInfo, retentionDays, firstSampleTime, REGIONS,
   type MetricKind, type Sample, type StoredAnomaly,
 } from './metricsStore.js';
-import { METRICS, bucketSeries, comparePeriods, detectAnomalies, detectorConfig } from './anomaly.js';
+import { METRICS, alertLimits, baselineInfo, bucketSeries, comparePeriods, detectAnomalies, detectionStatus, detectorConfig } from './anomaly.js';
 import { sendEmailViaResend, alertRecipients } from './alerts.js';
 
 const isRegion = (r: unknown): r is string => typeof r === 'string' && (REGIONS as readonly string[]).includes(r);
@@ -151,7 +151,29 @@ async function sendAnomalyEmail(items: StoredAnomaly[]): Promise<string> {
 /* ---------------------- routes ---------------------- */
 
 const RANGE_MS: Record<string, number> = { '1h': 3_600_000, '6h': 21_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000, '90d': 90 * 86_400_000 };
+const MAX_CUSTOM_SPAN_MS = 400 * 86_400_000;
 const parseKind = (v: unknown): MetricKind | null => (v === 'ping' || v === 'speed' ? v : null);
+
+interface TimeWindow { from: number; to: number; span: number; custom: boolean }
+
+/**
+ * Reads the period the user picked: either a preset (?range=24h) or a custom period (?from=...&to=... in epoch ms).
+ * Returns an error text when the custom period is not valid.
+ */
+function parseWindow(query: Request['query'], defaultRange: string): TimeWindow | string {
+  const now = Date.now();
+  const f = Number(query.from);
+  const t = Number(query.to);
+  if (query.from !== undefined && query.to !== undefined && Number.isFinite(f) && Number.isFinite(t)) {
+    const to = Math.min(t, now);
+    if (f >= to) return 'The start of the period must be before its end.';
+    if (to - f < 10 * 60_000) return 'The period must be at least 10 minutes long.';
+    if (to - f > MAX_CUSTOM_SPAN_MS) return 'The period can be at most 400 days long.';
+    return { from: f, to, span: to - f, custom: true };
+  }
+  const span = RANGE_MS[String(query.range)] || RANGE_MS[defaultRange];
+  return { from: now - span, to: now, span, custom: false };
+}
 
 export interface SchedulerState {
   intervalMin: number | null;
@@ -201,38 +223,76 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
     const metric = String(req.query.metric || Object.keys(METRICS[kind])[0]);
     if (!METRICS[kind][metric]) { res.status(400).json({ ok: false, error: 'Unknown metric.' }); return; }
     const region = isRegion(req.query.region) ? (req.query.region as string) : 'all';
-    const span = RANGE_MS[String(req.query.range)] || RANGE_MS['24h'];
-    const to = Date.now();
-    const from = to - span;
-    const bucketMs = Math.max(60_000, Math.round(span / 72 / 60_000) * 60_000); // ~72 points per line
+    const w = parseWindow(req.query, '24h');
+    if (typeof w === 'string') { res.status(400).json({ ok: false, error: w }); return; }
+    const bucketMs = Math.max(60_000, Math.round(w.span / 72 / 60_000) * 60_000); // ~72 points per line
     try {
-      const samples = await getSamples(kind, region, from, to);
-      const anomalies = (await getAnomalies(from, to)).filter((a) => a.kind === kind && a.metric === metric && (region === 'all' || a.region === region));
-      res.json({ ok: true, kind, metric, def: METRICS[kind][metric], from, to, bucketMs, sampleCount: samples.length, series: bucketSeries(samples, metric, from, to, bucketMs), anomalies });
+      const cfg = detectorConfig();
+      const [samples, anomalies, first] = await Promise.all([
+        getSamples(kind, region, w.from, w.to),
+        getAnomalies(w.from, w.to),
+        firstSampleTime(kind, region),
+      ]);
+      // For a single region also return the "normal" value and where alerts start, so the chart can draw them
+      let limits: { normal: number; warning: number; critical: number } | null = null;
+      if (region !== 'all') {
+        const recent = await getSamples(kind, region, Date.now() - cfg.lookbackDays * 86_400_000, Date.now(), 2000);
+        const info = baselineInfo(recent.filter((x) => typeof x.m[metric] === 'number').map((x) => x.m[metric]), METRICS[kind][metric], cfg);
+        if (info) { const l = alertLimits(info, METRICS[kind][metric]); limits = { normal: info.base, warning: l.warning, critical: l.critical }; }
+      }
+      res.json({
+        ok: true, kind, metric, def: METRICS[kind][metric], from: w.from, to: w.to, bucketMs, custom: w.custom,
+        sampleCount: samples.length, firstSampleAt: first, limits,
+        series: bucketSeries(samples, metric, w.from, w.to, bucketMs),
+        anomalies: anomalies.filter((a) => a.kind === kind && a.metric === metric && (region === 'all' || a.region === region)),
+      });
     } catch (e) { fail(res, e); }
   });
 
   router.get('/metrics/compare', deps.rateLimiter, async (req, res) => {
     const kind = parseKind(req.query.kind) || 'ping';
-    const span = RANGE_MS[String(req.query.range)] || RANGE_MS['24h'];
-    const mode = req.query.mode === 'lastweek' ? 'lastweek' : 'previous';
     const region = isRegion(req.query.region) ? (req.query.region as string) : 'all';
-    const now = Date.now();
-    const current = { from: now - span, to: now };
-    const shift = mode === 'lastweek' ? 7 * 86_400_000 : span;
+    const w = parseWindow(req.query, '24h');
+    if (typeof w === 'string') { res.status(400).json({ ok: false, error: w }); return; }
+    let mode: 'previous' | 'lastweek' = req.query.mode === 'lastweek' ? 'lastweek' : 'previous';
+    let modeNote: string | null = null;
+    if (mode === 'lastweek' && w.span > 7 * 86_400_000) {
+      mode = 'previous';
+      modeNote = 'Comparing with last week only works for periods up to 7 days, so the period right before was used instead.';
+    }
+    const current = { from: w.from, to: w.to };
+    const shift = mode === 'lastweek' ? 7 * 86_400_000 : w.span;
     const previous = { from: current.from - shift, to: current.to - shift };
     try {
-      const samples = await getSamples(kind, region, previous.from, now, 8000);
+      const [samples, first] = await Promise.all([getSamples(kind, region, previous.from, w.to, 8000), firstSampleTime(kind, region)]);
       const regions = region === 'all' ? [...REGIONS] : [region];
-      res.json({ ok: true, kind, mode, current, previous, rows: comparePeriods(samples, kind, regions, current, previous) });
+      const rows = comparePeriods(samples, kind, regions, current, previous);
+      res.json({
+        ok: true, kind, mode, modeNote, current, previous, rows,
+        firstSampleAt: first,
+        currentHasData: rows.some((r) => r.current),
+        previousHasData: rows.some((r) => r.previous),
+      });
+    } catch (e) { fail(res, e); }
+  });
+
+  // Is the detector active for each region/metric, what is "normal", where does an alert start?
+  router.get('/metrics/status', deps.rateLimiter, async (req, res) => {
+    const kind = parseKind(req.query.kind) || 'ping';
+    const region = isRegion(req.query.region) ? (req.query.region as string) : 'all';
+    const cfg = detectorConfig();
+    try {
+      const samples = await getSamples(kind, region, Date.now() - cfg.lookbackDays * 86_400_000, Date.now(), 2000);
+      const regions = region === 'all' ? [...REGIONS] : [region];
+      res.json({ ok: true, kind, rows: detectionStatus(samples, kind, regions, cfg) });
     } catch (e) { fail(res, e); }
   });
 
   router.get('/metrics/anomalies', deps.rateLimiter, async (req, res) => {
-    const span = RANGE_MS[String(req.query.range)] || RANGE_MS['7d'];
-    const from = Date.now() - span;
+    const w = parseWindow(req.query, '7d');
+    if (typeof w === 'string') { res.status(400).json({ ok: false, error: w }); return; }
     try {
-      const [list, acked] = await Promise.all([getAnomalies(from, Date.now() + 1000), getAckedIds(from)]);
+      const [list, acked] = await Promise.all([getAnomalies(w.from, w.to), getAckedIds(w.from)]);
       const items = list.map((a) => ({ ...a, acknowledged: acked.has(a.id) })).sort((a, b) => b.t - a.t);
       res.json({ ok: true, openCount: items.filter((i) => !i.acknowledged).length, items });
     } catch (e) { fail(res, e); }
@@ -246,9 +306,10 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
 
   router.get('/metrics/export.csv', deps.rateLimiter, async (req, res) => {
     const kind = parseKind(req.query.kind) || 'ping';
-    const span = RANGE_MS[String(req.query.range)] || RANGE_MS['30d'];
+    const w = parseWindow(req.query, '30d');
+    if (typeof w === 'string') { res.status(400).json({ ok: false, error: w }); return; }
     try {
-      const samples = await getSamples(kind, 'all', Date.now() - span, Date.now(), 20000);
+      const samples = await getSamples(kind, 'all', w.from, w.to, 20000);
       const cols = Object.keys(METRICS[kind]);
       const lines = ['timestamp_utc,region,source,' + cols.join(',')];
       for (const s of samples) lines.push([new Date(s.t).toISOString(), s.region, s.source, ...cols.map((c) => (typeof s.m[c] === 'number' ? s.m[c] : ''))].join(','));
