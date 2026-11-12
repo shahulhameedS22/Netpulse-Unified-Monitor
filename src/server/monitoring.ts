@@ -18,8 +18,12 @@ import {
   type MetricKind, type Sample, type StoredAnomaly,
 } from './metricsStore.js';
 import { METRICS, alertLimits, baselineInfo, bucketSeries, comparePeriods, detectAnomalies, detectionStatus, detectorConfig } from './anomaly.js';
-import { sendEmailViaResend, alertRecipients } from './alerts.js';
+import { sendEmailViaResend, alertRecipients, getLastEmailError } from './alerts.js';
 
+const maskEmail = (e: string): string => {
+  const [name, domain] = e.split('@');
+  return `${name.slice(0, 2)}***@${domain}`;
+};
 const isRegion = (r: unknown): r is string => typeof r === 'string' && (REGIONS as readonly string[]).includes(r);
 const finite = (v: unknown, min: number, max: number): v is number =>
   typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
@@ -203,9 +207,36 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
       detector: c,
       metrics: METRICS,
       regions: REGIONS,
-      email: { configured: Boolean(process.env.RESEND_API_KEY?.trim() && alertRecipients().length), minSeverity: emailMinSeverity(), cooldownMin: Math.round(emailCooldownMs() / 60000) },
+      email: {
+        configured: Boolean(process.env.RESEND_API_KEY?.trim() && alertRecipients().length),
+        apiKeySet: Boolean(process.env.RESEND_API_KEY?.trim()),
+        recipients: alertRecipients().map(maskEmail),
+        sender: process.env.ALERT_EMAIL_FROM?.trim() || null, // null = Resend's shared test sender (cannot send to your own domain)
+        minSeverity: emailMinSeverity(),
+        cooldownMin: Math.round(emailCooldownMs() / 60000),
+      },
       scheduler: schedulerState,
     });
+  });
+
+  // Sends a clearly marked TEST e-mail to the configured recipients (never to any other address).
+  // Limited to one per 30 seconds so it cannot be used to flood the team.
+  let lastTestEmailAt = 0;
+  router.post('/monitor/test-email', deps.rateLimiter, async (_req, res) => {
+    const to = alertRecipients();
+    if (!process.env.RESEND_API_KEY?.trim()) { res.status(400).json({ ok: false, error: 'RESEND_API_KEY is not set on the server.' }); return; }
+    if (!to.length) { res.status(400).json({ ok: false, error: 'ALERT_EMAIL_TO is empty or has no valid e-mail address.' }); return; }
+    if (Date.now() - lastTestEmailAt < 30_000) { res.status(429).json({ ok: false, error: 'Please wait 30 seconds before sending another test e-mail.' }); return; }
+    lastTestEmailAt = Date.now();
+    const dash = process.env.ALERT_DASHBOARD_URL?.trim() || '';
+    const when = new Date().toUTCString();
+    const status = await sendEmailViaResend(to, {
+      subject: '[TEST] Network Monitor e-mail alerts are working',
+      text: `This is a TEST e-mail from the Network Monitor.\n\nIf you can read this, anomaly alerts will reach you.\nSent: ${when}\n${dash ? `Dashboard: ${dash}\n` : ''}`,
+      html: `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto;border:1px solid #e5e7eb;border-radius:6px"><div style="background:#0F4761;color:#fff;padding:18px 22px"><div style="font-size:12px;letter-spacing:1px;opacity:.85">NETWORK MONITOR</div><div style="font-size:19px;font-weight:700;margin-top:4px">Test e-mail</div></div><p style="padding:16px 22px 4px;font-size:14px;color:#111827">This is a <b>test</b>. If you can read this, anomaly alerts will reach you.</p><p style="padding:0 22px 16px;font-size:12px;color:#6b7280">Sent: ${when}</p></div>`,
+    });
+    if (status === 'sent') { res.json({ ok: true, sentTo: to.map(maskEmail) }); return; }
+    res.status(502).json({ ok: false, error: getLastEmailError() || 'The e-mail could not be sent.' });
   });
 
   router.post('/metrics/ingest', deps.rateLimiter, async (req, res) => {
