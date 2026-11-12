@@ -21,6 +21,9 @@ interface NavigationProps {
   onSelectTab: (tab: NavTab) => void;
   speedTestRunning?: boolean;
   pingTestRunning?: boolean;
+  /** a test finished while the person was on another tab and its results have not been viewed yet */
+  speedTestDone?: boolean;
+  pingTestDone?: boolean;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -28,6 +31,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   onSelectTab,
   speedTestRunning = false,
   pingTestRunning = false,
+  speedTestDone = false,
+  pingTestDone = false,
 }) => {
   const { user, profile, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
@@ -43,15 +48,19 @@ export const Navigation: React.FC<NavigationProps> = ({
       id: 'speedtest' as NavTab,
       label: 'Speed Test',
       icon: Gauge,
-      badge: speedTestRunning ? 'RUNNING' : null,
-      badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse',
+      badge: speedTestRunning ? 'RUNNING' : speedTestDone ? 'DONE' : null,
+      badgeColor: speedTestRunning
+        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse'
+        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
     },
     {
       id: 'ping' as NavTab,
       label: 'Ping Monitoring',
       icon: Radio,
-      badge: pingTestRunning ? 'PROBING' : null,
-      badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 animate-pulse',
+      badge: pingTestRunning ? 'PROBING' : pingTestDone ? 'DONE' : null,
+      badgeColor: pingTestRunning
+        ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 animate-pulse'
+        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
     },
     {
       id: 'monitoring' as NavTab,
@@ -68,18 +77,13 @@ export const Navigation: React.FC<NavigationProps> = ({
     },
   ];
 
-  // Dynamic tabs: Dashboard & Regional Nodes always present;
-  // Speed Test or Ping Monitoring only shows when currently launched.
+  // Dashboard, Monitoring and Regional Nodes are always shown.
+  // Speed Test / Ping Monitoring are shown while you are on them, while their test is running
+  // (even if you are on another tab), and until you have looked at a finished result.
   const navItems = allNavItems.filter((item) => {
-    if (item.id === 'dashboard' || item.id === 'monitoring' || item.id === 'endpoints') {
-      return true;
-    }
-    if (currentTab === 'speedtest' && item.id === 'speedtest') {
-      return true;
-    }
-    if (currentTab === 'ping' && item.id === 'ping') {
-      return true;
-    }
+    if (item.id === 'dashboard' || item.id === 'monitoring' || item.id === 'endpoints') return true;
+    if (item.id === 'speedtest') return currentTab === 'speedtest' || speedTestRunning || speedTestDone;
+    if (item.id === 'ping') return currentTab === 'ping' || pingTestRunning || pingTestDone;
     return false;
   });
 
