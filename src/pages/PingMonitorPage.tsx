@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   type RegionId,
   type RegionPingResult,
@@ -73,6 +73,16 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
   const [historySessions, setHistorySessions] = useState<PingSession[]>(() => loadStoredPingSessions());
   const [showHistory, setShowHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+
+  // When "Session History" is opened, scroll down to the history panel.
+  const historySectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!showHistory) return;
+    const id = requestAnimationFrame(() => {
+      historySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [showHistory]);
 
   const isRunning = isRunningAll || singleRunningId !== null;
 
@@ -281,7 +291,7 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
 
       {/* History Drawer (if open) with clear Date & Time and Details button */}
       {showHistory && (
-        <section className="bg-[#141e33] border border-indigo-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
+        <section ref={historySectionRef} className="scroll-mt-24 bg-[#141e33] border border-indigo-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
           <div className="flex items-center justify-between pb-3 border-b border-slate-700 flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
               <History className="w-4 h-4 text-cyan-400" />
