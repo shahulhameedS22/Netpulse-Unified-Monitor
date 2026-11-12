@@ -49,7 +49,7 @@ export interface MonitorConfig {
   detector: { lookbackDays: number; minBaseline: number; zWarn: number; zCrit: number; minChangePct: number; lossWarnPct: number; lossCritPct: number };
   metrics: Record<MetricKind, Record<string, MetricDef>>;
   regions: string[];
-  email: { configured: boolean; minSeverity: 'warning' | 'critical'; cooldownMin: number };
+  email: { configured: boolean; apiKeySet: boolean; recipients: string[]; sender: string | null; minSeverity: 'warning' | 'critical'; cooldownMin: number };
   scheduler: { intervalMin: number | null; lastRunAt: number | null; lastResult: Array<{ region: string; status: string; detail?: string }> | null };
 }
 
@@ -72,6 +72,14 @@ export const fetchAnomalies = (period: Period) =>
 export const fetchStatus = (kind: MetricKind, region: string) =>
   getJson<{ rows: DetectionRow[] }>(`/api/metrics/status?${qs({ kind, region })}`);
 export const csvUrl = (kind: MetricKind, period: Period) => `/api/metrics/export.csv?${qs({ kind, ...periodQs(period) })}`;
+
+/** Asks the server to send a TEST e-mail to the configured recipients. Throws with the reason if it fails. */
+export async function sendTestEmail(): Promise<string[]> {
+  const res = await fetch('/api/monitor/test-email', { method: 'POST', signal: AbortSignal.timeout(20000) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body?.ok === false) throw new Error(body?.error || `Request failed (HTTP ${res.status})`);
+  return body.sentTo as string[];
+}
 
 export async function acknowledgeAnomaly(id: string): Promise<void> {
   const res = await fetch(`/api/metrics/anomalies/${encodeURIComponent(id)}/ack`, { method: 'POST' });
