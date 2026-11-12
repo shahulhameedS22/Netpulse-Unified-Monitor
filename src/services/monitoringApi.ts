@@ -14,20 +14,36 @@ export interface Anomaly {
   value: number; baselineMedian: number | null; deviationPct: number | null; message: string;
   emailStatus?: string; acknowledged?: boolean;
 }
-export interface Stats { n: number; avg: number; min: number; max: number; p50: number; p95: number }
+export interface Stats { n: number; avg: number; min: number; max: number; p50: number; p5: number; p95: number }
 export interface CompareRow {
   region: string; metric: string; label: string; unit: string;
-  current: Stats | null; previous: Stats | null; deltaPct: number | null;
+  current: Stats | null; previous: Stats | null;
+  worstNow: number | null; worstBefore: number | null;
+  deltaPct: number | null;
   verdict: 'better' | 'worse' | 'stable' | 'no-data';
 }
 export interface HistoryResponse {
-  kind: MetricKind; metric: string; def: MetricDef; from: number; to: number; bucketMs: number;
-  sampleCount: number; series: Record<string, SeriesPoint[]>; anomalies: Anomaly[];
+  kind: MetricKind; metric: string; def: MetricDef; from: number; to: number; bucketMs: number; custom: boolean;
+  sampleCount: number; firstSampleAt: number | null;
+  limits: { normal: number; warning: number; critical: number } | null; // only for a single region
+  series: Record<string, SeriesPoint[]>; anomalies: Anomaly[];
 }
 export interface CompareResponse {
-  kind: MetricKind; mode: 'previous' | 'lastweek';
+  kind: MetricKind; mode: 'previous' | 'lastweek'; modeNote: string | null;
   current: { from: number; to: number }; previous: { from: number; to: number }; rows: CompareRow[];
+  firstSampleAt: number | null; currentHasData: boolean; previousHasData: boolean;
 }
+export interface DetectionRow {
+  region: string; metric: string; label: string; unit: string; bad: 'high' | 'low';
+  samples: number; needed: number; state: 'no-data' | 'learning' | 'active';
+  normal: number | null; warningLimit: number | null; criticalLimit: number | null;
+  latest: number | null; latestAt: number | null; latestState: 'normal' | 'warning' | 'critical' | null;
+}
+
+/** The period the user picked: a preset like "24h", or an exact custom from/to (epoch ms). */
+export type Period = { type: 'preset'; range: RangeKey } | { type: 'custom'; from: number; to: number };
+const periodQs = (p: Period): Record<string, string> =>
+  p.type === 'preset' ? { range: p.range } : { from: String(p.from), to: String(p.to) };
 export interface MonitorConfig {
   storage: { backend: 'redis' | 'file'; persistent: boolean; retentionDays: number; note?: string };
   detector: { lookbackDays: number; minBaseline: number; zWarn: number; zCrit: number; minChangePct: number; lossWarnPct: number; lossCritPct: number };
@@ -47,13 +63,15 @@ async function getJson<T>(url: string): Promise<T> {
 const qs = (o: Record<string, string>) => new URLSearchParams(o).toString();
 
 export const fetchConfig = () => getJson<MonitorConfig>('/api/monitor/config');
-export const fetchHistory = (kind: MetricKind, metric: string, range: RangeKey, region: string) =>
-  getJson<HistoryResponse>(`/api/metrics/history?${qs({ kind, metric, range, region })}`);
-export const fetchCompare = (kind: MetricKind, range: RangeKey, mode: 'previous' | 'lastweek', region: string) =>
-  getJson<CompareResponse>(`/api/metrics/compare?${qs({ kind, range, mode, region })}`);
-export const fetchAnomalies = (range: RangeKey) =>
-  getJson<{ openCount: number; items: Anomaly[] }>(`/api/metrics/anomalies?${qs({ range })}`);
-export const csvUrl = (kind: MetricKind, range: RangeKey) => `/api/metrics/export.csv?${qs({ kind, range })}`;
+export const fetchHistory = (kind: MetricKind, metric: string, period: Period, region: string) =>
+  getJson<HistoryResponse>(`/api/metrics/history?${qs({ kind, metric, region, ...periodQs(period) })}`);
+export const fetchCompare = (kind: MetricKind, period: Period, mode: 'previous' | 'lastweek', region: string) =>
+  getJson<CompareResponse>(`/api/metrics/compare?${qs({ kind, mode, region, ...periodQs(period) })}`);
+export const fetchAnomalies = (period: Period) =>
+  getJson<{ openCount: number; items: Anomaly[] }>(`/api/metrics/anomalies?${qs(periodQs(period))}`);
+export const fetchStatus = (kind: MetricKind, region: string) =>
+  getJson<{ rows: DetectionRow[] }>(`/api/metrics/status?${qs({ kind, region })}`);
+export const csvUrl = (kind: MetricKind, period: Period) => `/api/metrics/export.csv?${qs({ kind, ...periodQs(period) })}`;
 
 export async function acknowledgeAnomaly(id: string): Promise<void> {
   const res = await fetch(`/api/metrics/anomalies/${encodeURIComponent(id)}/ack`, { method: 'POST' });
