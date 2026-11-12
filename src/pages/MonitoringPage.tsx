@@ -8,7 +8,7 @@ import {
   Download, GraduationCap, Info, Loader2, Mail, RefreshCw, ShieldCheck, Timer, TrendingUp,
 } from 'lucide-react';
 import {
-  acknowledgeAnomaly, csvUrl, fetchAnomalies, fetchCompare, fetchConfig, fetchHistory, fetchStatus,
+  acknowledgeAnomaly, csvUrl, fetchAnomalies, fetchCompare, fetchConfig, fetchHistory, fetchStatus, sendTestEmail,
   type Anomaly, type CompareResponse, type DetectionRow, type HistoryResponse, type MetricKind, type MonitorConfig,
   type Period, type RangeKey,
 } from '../services/monitoringApi';
@@ -212,6 +212,21 @@ export const MonitoringPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [emailResult, setEmailResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const runEmailTest = async () => {
+    setTestingEmail(true);
+    setEmailResult(null);
+    try {
+      const sentTo = await sendTestEmail();
+      setEmailResult({ ok: true, text: `Test e-mail sent to ${sentTo.join(', ')}. Check the inbox (and the spam folder).` });
+    } catch (e) {
+      setEmailResult({ ok: false, text: (e as Error).message });
+    } finally {
+      setTestingEmail(false);
+    }
+  };
 
   useEffect(() => {
     fetchConfig().then(setConfig).catch(() => undefined);
@@ -344,6 +359,46 @@ export const MonitoringPage: React.FC = () => {
           <div className="mt-4"><Notice tone="warn">{config.storage.note}</Notice></div>
         )}
       </div>
+
+      {/* E-mail alerts */}
+      {config && (
+        <Card
+          title="E-mail alerts"
+          icon={<Mail className={`w-4 h-4 ${config.email.configured ? 'text-emerald-400' : 'text-slate-400'}`} />}
+          sub={`Critical anomalies are e-mailed to the team (at most one e-mail per region and metric every ${config.email.cooldownMin} minutes).`}
+          right={
+            <button type="button" onClick={runEmailTest} disabled={!config.email.configured || testingEmail}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${config.email.configured ? 'border-cyan-400/40 text-cyan-300 bg-cyan-500/15 hover:bg-cyan-500/25 cursor-pointer' : 'border-slate-700 text-slate-500 cursor-not-allowed'}`}>
+              {testingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send test e-mail
+            </button>
+          }
+        >
+          <ul className="text-xs sm:text-sm text-slate-300 space-y-1.5">
+            <li className="flex items-start gap-2">
+              {config.email.apiKeySet ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-400 shrink-0" />}
+              <span>E-mail service key (<span className="font-mono">RESEND_API_KEY</span>): {config.email.apiKeySet ? 'set' : <b className="text-amber-300">missing</b>}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              {config.email.recipients.length ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-400 shrink-0" />}
+              <span>Recipients (<span className="font-mono">ALERT_EMAIL_TO</span>): {config.email.recipients.length ? <span className="font-mono">{config.email.recipients.join(', ')}</span> : <b className="text-amber-300">none set</b>}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              {config.email.sender ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-400 shrink-0" />}
+              <span>
+                Sender (<span className="font-mono">ALERT_EMAIL_FROM</span>):{' '}
+                {config.email.sender
+                  ? <span className="font-mono">{config.email.sender}</span>
+                  : <b className="text-amber-300">not set - Resend&apos;s shared test sender is used, which cannot deliver to company addresses. Set it to an address on your verified domain.</b>}
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <Info className="w-4 h-4 mt-0.5 text-cyan-400 shrink-0" />
+              <span>Sends for: {config.email.minSeverity === 'critical' ? 'critical anomalies only' : 'warnings and critical anomalies'}.</span>
+            </li>
+          </ul>
+          {emailResult && <div className="mt-3"><Notice tone={emailResult.ok ? 'ok' : 'error'}>{emailResult.text}</Notice></div>}
+        </Card>
+      )}
 
       {/* Controls */}
       <div className="bg-[#141e33] border border-slate-700/80 rounded-2xl p-4 space-y-3">
