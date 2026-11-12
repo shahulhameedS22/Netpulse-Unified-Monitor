@@ -196,6 +196,10 @@ function buildAlertEmail(region: RegionId, result: any, alert: PingAlert, isTest
   return { subject, html, text };
 }
 
+let lastEmailError: string | null = null;
+/** Short reason why the most recent e-mail send failed (null = last send worked). Shown in the Monitoring tab's test. */
+export const getLastEmailError = (): string | null => lastEmailError;
+
 export async function sendEmailViaResend(to: string[], mail: { subject: string; html: string; text: string }): Promise<'sent' | 'not_configured' | 'failed'> {
   const key = process.env.RESEND_API_KEY?.trim();
   if (!key || !to.length) return 'not_configured';
@@ -215,11 +219,17 @@ export async function sendEmailViaResend(to: string[], mail: { subject: string; 
       signal: controller.signal,
     });
     if (!r.ok) {
-      console.error('[alert] email provider returned HTTP', r.status, (await r.text()).slice(0, 200));
+      const body = (await r.text()).slice(0, 300);
+      let reason = body;
+      try { reason = JSON.parse(body)?.message || body; } catch { /* keep raw text */ }
+      lastEmailError = `The e-mail service answered HTTP ${r.status}: ${String(reason).slice(0, 220)}`;
+      console.error('[alert] email provider returned HTTP', r.status, body.slice(0, 200));
       return 'failed';
     }
+    lastEmailError = null;
     return 'sent';
   } catch (err: any) {
+    lastEmailError = err?.name === 'AbortError' ? 'The e-mail service did not answer in time.' : `Could not reach the e-mail service: ${err?.message || 'unknown error'}`;
     console.error('[alert] email send failed:', err?.name === 'AbortError' ? 'timeout' : err?.message);
     return 'failed';
   } finally {
