@@ -18,12 +18,12 @@ export type RegionId = 'IN-DC01' | 'IN-DC02' | 'LK-DC01' | 'SG-DC01';
 const FIXED_TARGET_IP = '8.8.8.8';
 
 type RedisCmd = (string | number)[];
-function redisConfig(): { url: string; token: string } | null {
+export function redisConfig(): { url: string; token: string } | null {
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
 }
-async function redisPipeline(cmds: RedisCmd[]): Promise<any[]> {
+export async function redisPipeline(cmds: RedisCmd[]): Promise<any[]> {
   const cfg = redisConfig();
   if (!cfg) throw new Error('STORAGE_NOT_CONFIGURED');
   const controller = new AbortController();
@@ -46,6 +46,8 @@ async function redisPipeline(cmds: RedisCmd[]): Promise<any[]> {
   }
 }
 const mailKey = (r: string) => `ping:alertmail:${r}`;
+/** Remembers that a region had a critical timeout run, so the daily summary e-mail never says "everything is good" on such a day. */
+export const CRITICAL_MARK_KEY = (r: string) => `ping:lastcritical:${r}`;
 
 export type AlertEmailStatus = 'not_required' | 'sent' | 'skipped_cooldown' | 'not_configured' | 'failed';
 export interface PingAlert {
@@ -239,6 +241,9 @@ export async function sendEmailViaResend(to: string[], mail: { subject: string; 
 
 /** Sends the critical email once per region per cooldown period. */
 export async function sendCriticalAlertEmail(region: RegionId, result: any, alert: PingAlert): Promise<AlertEmailStatus> {
+  if (redisConfig()) {
+    await redisPipeline([['SET', CRITICAL_MARK_KEY(region), JSON.stringify({ t: Date.now(), maxRun: alert.maxConsecutiveTimeouts, timeouts: alert.timeouts }), 'EX', 172800]]).catch(() => undefined);
+  }
   const to = alertRecipients();
   if (!process.env.RESEND_API_KEY?.trim() || !to.length) return 'not_configured';
   let acquired = false;
