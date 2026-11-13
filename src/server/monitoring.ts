@@ -129,14 +129,14 @@ interface TimeWindow { from: number; to: number; span: number; custom: boolean }
  * Reads the period the user picked: either a preset (?range=24h) or a custom period (?from=...&to=... in epoch ms).
  * Returns an error text when the custom period is not valid.
  */
-function parseWindow(query: Request['query'], defaultRange: string): TimeWindow | string {
+function parseWindow(query: Request['query'], defaultRange: string, minSpanMs = 10 * 60_000): TimeWindow | string {
   const now = Date.now();
   const f = Number(query.from);
   const t = Number(query.to);
   if (query.from !== undefined && query.to !== undefined && Number.isFinite(f) && Number.isFinite(t)) {
     const to = Math.min(t, now);
     if (f >= to) return 'The start of the period must be before its end.';
-    if (to - f < 10 * 60_000) return 'The period must be at least 10 minutes long.';
+    if (to - f < minSpanMs) return `The period must be at least ${Math.round(minSpanMs / 60_000)} minute${minSpanMs > 60_000 ? 's' : ''} long.`;
     if (to - f > MAX_CUSTOM_SPAN_MS) return 'The period can be at most 400 days long.';
     return { from: f, to, span: to - f, custom: true };
   }
@@ -158,6 +158,34 @@ export interface MonitoringDeps {
   runDaily: (opts: { force: boolean }) => Promise<unknown>;
   safeCompare: (a: string, b: string) => boolean;
   rateLimiter: (req: Request, res: Response, next: () => void) => void;
+}
+
+/** Time zone for the CSV: the browser sends its own (e.g. Asia/Kolkata); anything invalid falls back to UTC. */
+function csvTimeZone(q: unknown): string {
+  const tz = typeof q === 'string' ? q.trim() : '';
+  if (tz) { try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); return tz; } catch { /* invalid name */ } }
+  return 'UTC';
+}
+
+const csvCell = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+
+/**
+ * Builds the history CSV: separate Date and Time columns (in the viewer's time zone) and readable headers,
+ * e.g. "Download (Mbps)", "Ping (ms)", "Packet Loss (%)".
+ */
+export function buildCsv(kind: MetricKind, samples: Sample[], timeZone: string): string {
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const zoneName = timeZone === 'UTC' ? 'UTC'
+    : new Intl.DateTimeFormat('en-IN', { timeZone, timeZoneName: 'short' }).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value || timeZone;
+  const cols = Object.entries(METRICS[kind]);
+  const title = (label: string) => label.replace(/ speed$/i, '').replace(/\b\w/g, (c) => c.toUpperCase());
+  const lines = [['Date', `Time (${zoneName})`, 'Region', 'Source', ...cols.map(([, d]) => `${title(d.label)} (${d.unit})`)].map(csvCell).join(',')];
+  for (const s of samples) {
+    const p: Record<string, string> = {};
+    for (const part of fmt.formatToParts(new Date(s.t))) p[part.type] = part.value;
+    lines.push([`${p.year}-${p.month}-${p.day}`, `${p.hour}:${p.minute}:${p.second}`, s.region, s.source, ...cols.map(([k]) => (typeof s.m[k] === 'number' ? s.m[k] : ''))].map(csvCell).join(','));
+  }
+  return lines.join('\n');
 }
 
 export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): void {
@@ -313,16 +341,13 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
 
   router.get('/metrics/export.csv', deps.rateLimiter, async (req, res) => {
     const kind = parseKind(req.query.kind) || 'ping';
-    const w = parseWindow(req.query, '30d');
+    const w = parseWindow(req.query, '30d', 60_000); // a CSV may cover just one test, so one minute is enough
     if (typeof w === 'string') { res.status(400).json({ ok: false, error: w }); return; }
     try {
       const samples = await getSamples(kind, 'all', w.from, w.to, 20000);
-      const cols = Object.keys(METRICS[kind]);
-      const lines = ['timestamp_utc,region,source,' + cols.join(',')];
-      for (const s of samples) lines.push([new Date(s.t).toISOString(), s.region, s.source, ...cols.map((c) => (typeof s.m[c] === 'number' ? s.m[c] : ''))].join(','));
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="netpulse-${kind}-history.csv"`);
-      res.send(lines.join('\n'));
+      res.send(buildCsv(kind, samples, csvTimeZone(req.query.tz)));
     } catch (e) { fail(res, e); }
   });
 
