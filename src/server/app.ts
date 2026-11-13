@@ -16,6 +16,7 @@ import dotenv from 'dotenv';
 import { dispatchSpeedTestRoute } from './speedTestApi.js';
 import { buildAlert, sendCriticalAlertEmail, registerAlertRoutes } from './alerts.js';
 import { registerMonitoringRoutes, recordSamples, sampleFromPingResult, schedulerState } from './monitoring.js';
+import { runDailyCheck } from './dailyCheck.js';
 
 dotenv.config();
 
@@ -163,6 +164,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     providedToken = apiKeyHeader.trim();
   } else if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
     providedToken = authHeader.substring(7).trim();
+  }
+
+  // Vercel Cron authenticates with CRON_SECRET (not the administrator key): let it reach its two routes,
+  // where the handler checks the secret itself.
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (providedToken && cronSecret && /\/monitor\/(run|daily)$/.test(req.path) && safeCompare(providedToken, cronSecret)) {
+    req.isApiKeyAuthenticated = false;
+    return next();
   }
 
   if (providedToken) {
@@ -529,8 +538,14 @@ export async function runScheduledProbes(): Promise<Array<{ region: string; stat
             results.push({ region: regionId, status: 'error', detail: `Regional agent answered HTTP ${response.status}` });
             return;
           }
-          const sample = sampleFromPingResult(regionId, await response.json(), 'scheduled');
+          const pingBody: any = await response.json();
+          const sample = sampleFromPingResult(regionId, pingBody, 'scheduled');
           if (sample) samples.push(sample);
+          if (pingBody && typeof pingBody === 'object' && Number.isInteger(pingBody.requestsSent)) {
+            if (typeof pingBody.failedRequests !== 'number') pingBody.failedRequests = pingBody.requestsSent - (Number(pingBody.successfulReplies) || 0);
+            const alert = buildAlert(pingBody);
+            if (alert.level === 'critical') await sendCriticalAlertEmail(regionId, pingBody, alert);
+          }
           results.push({ region: regionId, status: sample ? 'recorded' : 'no_data' });
         } else if (isPushRegion(regionId)) {
           if (!redisConfig()) { results.push({ region: regionId, status: 'skipped', detail: 'Redis queue not configured' }); return; }
@@ -584,6 +599,7 @@ export function createApiApp(): Application {
   // History, comparison, anomaly detection and scheduled monitoring
   registerMonitoringRoutes(apiRouter, {
     runProbes: runScheduledProbes,
+    runDaily: (opts) => runDailyCheck({ runPings: runScheduledProbes }, opts),
     safeCompare,
     rateLimiter: healthRateLimiter as any,
   });
