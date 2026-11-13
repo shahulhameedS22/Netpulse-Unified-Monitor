@@ -50,6 +50,7 @@ export interface MonitorConfig {
   metrics: Record<MetricKind, Record<string, MetricDef>>;
   regions: string[];
   email: { configured: boolean; apiKeySet: boolean; recipients: string[]; sender: string | null; minSeverity: 'warning' | 'critical'; cooldownMin: number };
+  daily?: { lastRunAt: number; overall: string; email: string } | null;
   scheduler: { intervalMin: number | null; lastRunAt: number | null; lastResult: Array<{ region: string; status: string; detail?: string }> | null };
 }
 
