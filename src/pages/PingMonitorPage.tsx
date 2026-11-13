@@ -13,6 +13,8 @@ import {
 import { executeRealRegionalPing } from '../services/regionalApi';
 import { SummaryCards } from '../components/SummaryCards';
 import { RegionCard } from '../components/RegionCard';
+import { CsvRangeButton } from '../components/CsvRangeButton';
+import { pingCsv, pingPacketsCsv, saveCsv, stamp } from '../lib/csvDownload';
 import { PacketInspectionModal } from '../components/PacketInspectionModal';
 import { SessionDetailModal } from '../components/SessionDetailModal';
 import { NextTestPrompt } from '../components/NextTestPrompt';
@@ -31,6 +33,7 @@ import {
   Clock,
   History,
   ChevronRight,
+  Download,
 } from 'lucide-react';
 
 import {
@@ -194,6 +197,11 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
       setSingleRunningId(null);
     }
   };
+
+  // Results on screen now (used by the CSV buttons)
+  const finishedResults = Object.values(regionalResults).filter((r) => r.status !== 'Not Tested' && r.status !== 'Running');
+  const hasPingResults = finishedResults.length > 0;
+  const runStamp = finishedResults.map((r) => r.completedAt || r.startedAt).filter(Boolean).sort().pop() || null;
 
   return (
     <div className="space-y-8 animate-fade-in pb-12">
@@ -389,6 +397,16 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
                       </button>
 
                       <button
+                        onClick={(e) => { e.stopPropagation(); saveCsv(`netpulse-ping-test-${stamp(sess.startedAt)}`, pingCsv(sess.regions)); }}
+                        type="button"
+                        title="Download this test as CSV"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-200 border border-slate-700 hover:bg-slate-800/80 transition-colors cursor-pointer shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>CSV</span>
+                      </button>
+
+                      <button
                         onClick={async (e) => {
                           e.stopPropagation();
                           setHistoryError(null);
@@ -425,9 +443,32 @@ export const PingMonitorPage: React.FC<PingMonitorPageProps> = ({
               Live round-trip metrics to 8.8.8.8. Click &quot;Packets&quot; to inspect individual sequences.
             </p>
           </div>
-          <span className="text-xs font-mono text-slate-400">
-            4 Nodes Active
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span className="text-xs font-mono text-slate-400">
+              4 Nodes Active
+            </span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => saveCsv(`netpulse-ping-test-${stamp(runStamp)}`, pingCsv(regionalResults))}
+                disabled={!hasPingResults}
+                title={hasPingResults ? 'Download the results shown on this page' : 'Run a ping test first'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-200 hover:bg-slate-800/80 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" /> This test CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => saveCsv(`netpulse-ping-packets-${stamp(runStamp)}`, pingPacketsCsv(regionalResults))}
+                disabled={!hasPingResults}
+                title="One row per packet: reply or timeout"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-200 hover:bg-slate-800/80 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" /> Packets CSV
+              </button>
+              <CsvRangeButton kind="ping" />
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
