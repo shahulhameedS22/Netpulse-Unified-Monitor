@@ -72,7 +72,8 @@ export const fetchAnomalies = (period: Period) =>
   getJson<{ openCount: number; items: Anomaly[] }>(`/api/metrics/anomalies?${qs(periodQs(period))}`);
 export const fetchStatus = (kind: MetricKind, region: string) =>
   getJson<{ rows: DetectionRow[] }>(`/api/metrics/status?${qs({ kind, region })}`);
-export const csvUrl = (kind: MetricKind, period: Period) => `/api/metrics/export.csv?${qs({ kind, ...periodQs(period) })}`;
+const browserTimeZone = (): string => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } };
+export const csvUrl = (kind: MetricKind, period: Period) => `/api/metrics/export.csv?${qs({ kind, tz: browserTimeZone(), ...periodQs(period) })}`;
 
 /** Asks the server to send a TEST e-mail to the configured recipients. Throws with the reason if it fails. */
 export async function sendTestEmail(): Promise<string[]> {
