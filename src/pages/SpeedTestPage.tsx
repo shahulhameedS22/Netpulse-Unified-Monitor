@@ -4,6 +4,8 @@ import { speedTestEngine } from '../services/speedTestEngine';
 import { LiveMetrics, SpeedTestResult, TestStage, RegionState } from '../types/speed';
 import { SpeedGauge } from '../components/SpeedGauge';
 import { RegionResultSection } from '../components/RegionResultSection';
+import { CsvRangeButton } from '../components/CsvRangeButton';
+import { speedCsv, saveCsv, stamp, type SpeedCsvRow } from '../lib/csvDownload';
 import {
   Play,
   Square,
@@ -17,6 +19,7 @@ import {
   Gauge,
   History,
   ChevronRight,
+  Download,
 } from 'lucide-react';
 import { type SpeedTestSession } from '../types/speedSession';
 import {
@@ -318,6 +321,32 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
   const activeRegion = activeRegionIndex !== null ? regionStates[activeRegionIndex] : null;
   const activeMetrics = activeRegion?.liveMetrics || null;
   const activeStage: TestStage = activeRegion?.stage || (hasCompletedRun ? 'complete' : 'idle');
+
+  // CSV of the test that is on screen now (done and failed regions only)
+  const runCsvRows: SpeedCsvRow[] = regionStates
+    .filter((r) => r.status === 'completed' || r.status === 'failed')
+    .map((r) => ({
+      at: r.result?.timestamp ?? null,
+      serverCode: r.endpoint.serverCode,
+      name: `${r.endpoint.name} - ${r.endpoint.provider}`,
+      status: r.status === 'completed' ? 'Completed' : 'Failed',
+      downloadMbps: r.result?.downloadMbps ?? null,
+      uploadMbps: r.result?.uploadMbps ?? null,
+      pingMs: r.result?.pingMs ?? null,
+      jitterMs: r.result?.jitterMs ?? null,
+      note: r.errorMessage,
+    }));
+  const downloadRunCsv = () => {
+    const when = runCsvRows.find((r) => r.at)?.at || new Date().toISOString();
+    saveCsv(`netpulse-speed-test-${stamp(when)}`, speedCsv(runCsvRows, when));
+  };
+  const downloadSessionCsv = (sess: SpeedTestSession) => {
+    const rows: SpeedCsvRow[] = Object.values(sess.regions).map((r) => ({
+      serverCode: r.serverCode, name: r.name, status: r.status === 'completed' ? 'Completed' : r.status === 'failed' ? 'Failed' : 'Waiting',
+      downloadMbps: r.downloadMbps, uploadMbps: r.uploadMbps, pingMs: r.pingMs, jitterMs: r.jitterMs, note: r.errorMessage,
+    }));
+    saveCsv(`netpulse-speed-test-${stamp(sess.startedAt)}`, speedCsv(rows, sess.completedAt || sess.startedAt));
+  };
 
   const completedCount = regionStates.filter((r) => r.status === 'completed').length;
   const failedCount = regionStates.filter((r) => r.status === 'failed').length;
@@ -696,6 +725,16 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
                       </button>
 
                       <button
+                        onClick={(e) => { e.stopPropagation(); downloadSessionCsv(sess); }}
+                        type="button"
+                        title="Download this test as CSV"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-200 border border-slate-700 hover:bg-slate-800/80 transition-colors cursor-pointer shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>CSV</span>
+                      </button>
+
+                      <button
                         onClick={async (e) => {
                           e.stopPropagation();
                           const updated = await removeSpeedSession(sess.id);
@@ -769,9 +808,23 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
               Dedicated benchmarks for IN-DC01, IN-DC02, LK-DC01, and SG-DC01.
             </p>
           </div>
-          <span className="text-xs font-mono text-slate-500">
-            {completedCount} Done • {failedCount} Failed • {waitingCount} Waiting
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span className="text-xs font-mono text-slate-500">
+              {completedCount} Done • {failedCount} Failed • {waitingCount} Waiting
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={downloadRunCsv}
+                disabled={runCsvRows.length === 0}
+                title={runCsvRows.length === 0 ? 'Run a speed test first' : 'Download the results shown on this page'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-200 hover:bg-slate-800/80 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" /> This test CSV
+              </button>
+              <CsvRangeButton kind="speed" />
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
