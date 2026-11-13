@@ -58,7 +58,7 @@ export const RegionResultSection: React.FC<RegionResultSectionProps> = ({
   return (
     <section
       id={`region-${endpoint.serverCode.toLowerCase()}`}
-      className={`rounded-2xl transition-all duration-300 relative overflow-hidden backdrop-blur-xl border ${
+      className={`rounded-2xl transition-colors duration-300 relative overflow-hidden border ${
         isActive
           ? 'bg-[#16233f] border-cyan-400/70 ring-2 ring-cyan-500/40 shadow-2xl shadow-cyan-900/20'
           : status === 'completed'
