@@ -233,59 +233,63 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
 
     if (!isCancelledRef.current) {
       setHasCompletedRun(true);
-
-      setRegionStates((finalStates) => {
-        const completedRegionsList = finalStates.filter((r) => r.status === 'completed');
-        const failedRegionsList = finalStates.filter((r) => r.status === 'failed');
-
-        const downloads = completedRegionsList.map((r) => r.result?.downloadMbps || 0).filter((v) => v > 0);
-        const uploads = completedRegionsList.map((r) => r.result?.uploadMbps || 0).filter((v) => v > 0);
-        const pings = completedRegionsList.map((r) => r.result?.pingMs || 0).filter((v) => v > 0);
-
-        const avgDownloadMbps = downloads.length ? downloads.reduce((a, b) => a + b, 0) / downloads.length : 0;
-        const avgUploadMbps = uploads.length ? uploads.reduce((a, b) => a + b, 0) / uploads.length : 0;
-        const avgPingMs = pings.length ? pings.reduce((a, b) => a + b, 0) / pings.length : 0;
-        const peakDownloadMbps = downloads.length ? Math.max(...downloads) : 0;
-
-        const regionsMap: Record<string, any> = {};
-        for (const reg of finalStates) {
-          regionsMap[reg.endpoint.serverCode] = {
-            serverCode: reg.endpoint.serverCode,
-            name: reg.endpoint.name,
-            country: reg.endpoint.country,
-            status: reg.status,
-            downloadMbps: reg.result?.downloadMbps ?? null,
-            uploadMbps: reg.result?.uploadMbps ?? null,
-            pingMs: reg.result?.pingMs ?? null,
-            jitterMs: reg.result?.jitterMs ?? null,
-            errorMessage: reg.errorMessage ?? null,
-          };
-        }
-
-        const speedSession: SpeedTestSession = {
-          id: `spd_${Date.now()}`,
-          startedAt: sessionStartTimeRef.current || new Date().toISOString(),
-          completedAt: new Date().toISOString(),
-          regions: regionsMap,
-          summary: {
-            totalRegions: finalStates.length,
-            completedRegions: completedRegionsList.length,
-            failedRegions: failedRegionsList.length,
-            avgDownloadMbps,
-            avgUploadMbps,
-            avgPingMs,
-            peakDownloadMbps,
-          },
-        };
-
-        persistSpeedSession(speedSession).then((updated) => {
-          setHistorySessions(updated);
-        });
-
-        return finalStates;
-      });
     }
   };
+
+  // Save the finished session ONCE, after the final results are already on screen.
+  // (It used to run inside a state updater, so the results re-rendered a second time when the save finished.)
+  useEffect(() => {
+    if (!hasCompletedRun) return;
+    const finalStates = regionStates;
+
+    const completedRegionsList = finalStates.filter((r) => r.status === 'completed');
+    const failedRegionsList = finalStates.filter((r) => r.status === 'failed');
+
+    const downloads = completedRegionsList.map((r) => r.result?.downloadMbps || 0).filter((v) => v > 0);
+    const uploads = completedRegionsList.map((r) => r.result?.uploadMbps || 0).filter((v) => v > 0);
+    const pings = completedRegionsList.map((r) => r.result?.pingMs || 0).filter((v) => v > 0);
+
+    const avgDownloadMbps = downloads.length ? downloads.reduce((a, b) => a + b, 0) / downloads.length : 0;
+    const avgUploadMbps = uploads.length ? uploads.reduce((a, b) => a + b, 0) / uploads.length : 0;
+    const avgPingMs = pings.length ? pings.reduce((a, b) => a + b, 0) / pings.length : 0;
+    const peakDownloadMbps = downloads.length ? Math.max(...downloads) : 0;
+
+    const regionsMap: Record<string, any> = {};
+    for (const reg of finalStates) {
+      regionsMap[reg.endpoint.serverCode] = {
+        serverCode: reg.endpoint.serverCode,
+        name: reg.endpoint.name,
+        country: reg.endpoint.country,
+        status: reg.status,
+        downloadMbps: reg.result?.downloadMbps ?? null,
+        uploadMbps: reg.result?.uploadMbps ?? null,
+        pingMs: reg.result?.pingMs ?? null,
+        jitterMs: reg.result?.jitterMs ?? null,
+        errorMessage: reg.errorMessage ?? null,
+      };
+    }
+
+    const speedSession: SpeedTestSession = {
+      id: `spd_${Date.now()}`,
+      startedAt: sessionStartTimeRef.current || new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      regions: regionsMap,
+      summary: {
+        totalRegions: finalStates.length,
+        completedRegions: completedRegionsList.length,
+        failedRegions: failedRegionsList.length,
+        avgDownloadMbps,
+        avgUploadMbps,
+        avgPingMs,
+        peakDownloadMbps,
+      },
+    };
+
+    persistSpeedSession(speedSession).then((updated) => {
+      setHistorySessions(updated);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasCompletedRun]);
 
   const handleStopTest = () => {
     isCancelledRef.current = true;
@@ -322,7 +326,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
   return (
     <div className="space-y-8 animate-fade-in pb-12">
       {/* Top Header & Overview */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#141e33]/90 border border-slate-700/80 rounded-2xl p-6 sm:p-7 backdrop-blur-xl shadow-xl">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#141e33]/90 border border-slate-700/80 rounded-2xl p-6 sm:p-7 shadow-xl">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
             <span className="text-xs font-bold uppercase tracking-wider text-cyan-400 bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/30">
@@ -362,7 +366,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
       {/* Control Bar & Sequence Pipeline */}
       <section
         ref={testSectionRef}
-        className="bg-gradient-to-r from-[#141e33] to-[#16233f] border border-slate-700/80 rounded-2xl p-6 sm:p-7 backdrop-blur-xl shadow-2xl relative overflow-hidden"
+        className="bg-gradient-to-r from-[#141e33] to-[#16233f] border border-slate-700/80 rounded-2xl p-6 sm:p-7 shadow-2xl relative overflow-hidden"
       >
         <div className="absolute top-0 right-0 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -494,7 +498,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
         </div>
 
         <div className="lg:col-span-5 flex flex-col justify-between space-y-4">
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 backdrop-blur-xl flex-1 flex flex-col justify-between">
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 flex-1 flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
@@ -594,7 +598,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
 
       {/* Speed Test History Drawer */}
       {showHistory && (
-        <section ref={historySectionRef} className="scroll-mt-24 bg-[#141e33] border border-cyan-500/40 rounded-2xl p-6 backdrop-blur-xl space-y-4 animate-fade-in shadow-xl">
+        <section ref={historySectionRef} className="scroll-mt-24 bg-[#141e33] border border-cyan-500/40 rounded-2xl p-6 space-y-4 animate-fade-in shadow-xl">
           <div className="flex items-center justify-between pb-3 border-b border-slate-700 flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
               <History className="w-4 h-4 text-cyan-400" />
