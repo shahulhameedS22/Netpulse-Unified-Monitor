@@ -10,6 +10,7 @@
  *   GET  /metrics/export.csv             raw history download
  *   GET  /monitor/config                 thresholds, storage mode, scheduler status
  *   GET|POST /monitor/run                run one scheduled probe round (needs CENTRAL_API_KEY or CRON_SECRET)
+ *   GET|POST /monitor/daily              daily job: ping + speed for all regions, then ONE summary e-mail
  */
 import type { Request, Response, Router } from 'express';
 import crypto from 'crypto';
@@ -18,7 +19,7 @@ import {
   type MetricKind, type Sample, type StoredAnomaly,
 } from './metricsStore.js';
 import { METRICS, alertLimits, baselineInfo, bucketSeries, comparePeriods, detectAnomalies, detectionStatus, detectorConfig } from './anomaly.js';
-import { sendEmailViaResend, alertRecipients, getLastEmailError } from './alerts.js';
+import { sendEmailViaResend, alertRecipients, getLastEmailError, redisConfig, redisPipeline } from './alerts.js';
 
 const maskEmail = (e: string): string => {
   const [name, domain] = e.split('@');
@@ -103,53 +104,17 @@ export async function recordSamples(samples: Sample[]): Promise<StoredAnomaly[]>
     await addSample(s);
     for (const a of detectAnomalies(s, baseline, cfg)) {
       if (recent.some((x) => x.id === a.id)) continue; // the same session was sent twice: do not alert twice
-      // e-mail only if nothing was e-mailed for this region+metric within the cool-down
-      const wanted = a.severity === 'critical' || emailMinSeverity() === 'warning';
-      const coolingDown = [...recent, ...found].some(
-        (x) => x.region === a.region && x.metric === a.metric && x.emailStatus === 'sent' && Date.now() - x.t < emailCooldownMs()
-      );
-      a.emailStatus = wanted ? (coolingDown ? 'skipped_cooldown' : 'pending') : 'not_required';
+      // Anomalies are shown on the dashboard and listed in the daily summary e-mail. They are NOT e-mailed on their own:
+      // the only separate (red) e-mail is the critical ping-timeout alert in alerts.ts.
+      a.emailStatus = 'not_required';
       found.push(a);
     }
   }
 
-  // one e-mail per call, listing every anomaly that needs one
-  const toMail = found.filter((a) => a.emailStatus === 'pending');
-  if (toMail.length) {
-    const status = await sendAnomalyEmail(toMail);
-    for (const a of toMail) a.emailStatus = status;
-  }
   for (const a of found) await addAnomaly(a);
 
   if (Math.random() < 0.05) pruneOld().catch(() => undefined); // retention clean-up, now and then
   return found;
-}
-
-async function sendAnomalyEmail(items: StoredAnomaly[]): Promise<string> {
-  const to = alertRecipients();
-  if (!process.env.RESEND_API_KEY?.trim() || !to.length) return 'not_configured';
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const dash = process.env.ALERT_DASHBOARD_URL?.trim() || '';
-  const worst = items.some((i) => i.severity === 'critical') ? 'CRITICAL' : 'WARNING';
-  const regions = [...new Set(items.map((i) => i.region))].join(', ');
-  const subject = `[${worst}] Network anomaly detected: ${regions}`;
-  const lines = items.map((i) => `- [${i.severity.toUpperCase()}] ${i.message}`);
-  const text = [
-    'NETWORK MONITOR - ANOMALY ALERT', '', ...lines, '',
-    'These values differ strongly from what this region normally shows (see the Monitoring tab for the history).',
-    dash ? `Dashboard: ${dash}` : '',
-    `Further e-mails for the same region and metric are suppressed for ${Math.round(emailCooldownMs() / 60000)} minutes.`,
-  ].filter(Boolean).join('\n');
-  const html =
-    `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:620px;margin:auto;border:1px solid #e5e7eb;border-radius:6px">` +
-    `<div style="background:#0F4761;color:#fff;padding:18px 22px"><div style="font-size:12px;letter-spacing:1px;opacity:.85">NETWORK MONITOR</div>` +
-    `<div style="font-size:19px;font-weight:700;margin-top:4px">Anomaly detected (${worst})</div></div>` +
-    `<ul style="padding:16px 22px 4px 38px;line-height:1.55;font-size:14px;color:#111827">` +
-    items.map((i) => `<li style="margin-bottom:8px"><b style="color:${i.severity === 'critical' ? '#b91c1c' : '#b45309'}">${i.severity.toUpperCase()}</b> - ${esc(i.message)}</li>`).join('') +
-    `</ul><p style="padding:0 22px 6px;font-size:13px;color:#374151">These values differ strongly from what the region normally shows.</p>` +
-    (dash ? `<p style="padding:0 22px 16px"><a href="${esc(dash)}" style="background:#0F4761;color:#fff;padding:9px 16px;border-radius:4px;text-decoration:none;font-size:13px">Open the dashboard</a></p>` : '') +
-    `<p style="padding:12px 22px;border-top:1px solid #e5e7eb;font-size:11.5px;color:#6b7280;margin:0">Automated message. Further e-mails for the same region and metric are suppressed for ${Math.round(emailCooldownMs() / 60000)} minutes.</p></div>`;
-  return sendEmailViaResend(to, { subject, html, text });
 }
 
 /* ---------------------- routes ---------------------- */
@@ -189,6 +154,8 @@ export const schedulerState: SchedulerState = { intervalMin: null, lastRunAt: nu
 export interface MonitoringDeps {
   /** runs one probe round for all regions (implemented in app.ts, which owns the regional connections) */
   runProbes: () => Promise<Array<{ region: string; status: string; detail?: string }>>;
+  /** the daily job: ping + speed for all regions, then ONE summary e-mail (implemented in dailyCheck.ts) */
+  runDaily: (opts: { force: boolean }) => Promise<unknown>;
   safeCompare: (a: string, b: string) => boolean;
   rateLimiter: (req: Request, res: Response, next: () => void) => void;
 }
@@ -199,9 +166,18 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
     res.status(503).json({ ok: false, error: 'History storage is temporarily unavailable.' });
   };
 
-  router.get('/monitor/config', deps.rateLimiter, (_req, res) => {
+  router.get('/monitor/config', deps.rateLimiter, async (_req, res) => {
     const c = detectorConfig();
+    let daily: { lastRunAt: number; overall: string; email: string } | null = null;
+    if (redisConfig()) {
+      try {
+        const [raw] = await redisPipeline([['GET', 'daily:last']]);
+        const d = raw ? JSON.parse(raw) : null;
+        if (d && typeof d.t === 'number') daily = { lastRunAt: d.t, overall: String(d.overall), email: String(d.email) };
+      } catch { /* the status badge just stays empty */ }
+    }
     res.json({
+      daily,
       ok: true,
       storage: storageInfo(),
       detector: c,
@@ -363,4 +339,18 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
   };
   router.get('/monitor/run', runHandler);
   router.post('/monitor/run', runHandler);
+
+  // The daily job (Vercel Cron calls GET /api/monitor/daily with "Authorization: Bearer <CRON_SECRET>").
+  // ?force=1 sends the summary e-mail even if one was already sent today (for testing).
+  const dailyHandler = async (req: Request, res: Response) => {
+    const bearer = typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ') ? req.headers.authorization.slice(7).trim() : '';
+    const cron = process.env.CRON_SECRET?.trim();
+    const ok = (req as any).isApiKeyAuthenticated === true || (cron && bearer && deps.safeCompare(bearer, cron));
+    if (!ok) { res.status(401).json({ ok: false, error: 'Administrator key or CRON_SECRET required.' }); return; }
+    try {
+      res.json({ ok: true, ...(await deps.runDaily({ force: req.query.force === '1' })) as object });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || 'Daily check failed.' }); }
+  };
+  router.get('/monitor/daily', dailyHandler);
+  router.post('/monitor/daily', dailyHandler);
 }
