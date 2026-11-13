@@ -345,13 +345,13 @@ export const MonitoringPage: React.FC = () => {
               <Database className="w-3.5 h-3.5" />
               {config ? `History: ${config.storage.backend === 'redis' ? 'Redis' : 'local file'} - keeps ${config.storage.retentionDays} days${config.storage.persistent ? '' : ' (temporary)'}` : 'History: checking...'}
             </span>
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.scheduler.intervalMin || config?.scheduler.lastRunAt ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-600 text-slate-300 bg-slate-800/60'}`}>
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.daily?.lastRunAt || config?.scheduler.intervalMin || config?.scheduler.lastRunAt ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-600 text-slate-300 bg-slate-800/60'}`}>
               <Timer className="w-3.5 h-3.5" />
-              {config?.scheduler.intervalMin ? `Auto ping every ${config.scheduler.intervalMin} min` : config?.scheduler.lastRunAt ? `Last auto run ${fmtWhen(config.scheduler.lastRunAt)}` : 'Auto monitoring: off'}
+              {config?.daily?.lastRunAt ? `Daily auto check - last run ${fmtWhen(config.daily.lastRunAt)}` : config?.scheduler.intervalMin ? `Auto ping every ${config.scheduler.intervalMin} min` : config?.scheduler.lastRunAt ? `Last auto run ${fmtWhen(config.scheduler.lastRunAt)}` : 'Daily auto check: waiting for first run'}
             </span>
             <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.email.configured ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-600 text-slate-300 bg-slate-800/60'}`}>
               <Mail className="w-3.5 h-3.5" />
-              {config?.email.configured ? `E-mail on ${config.email.minSeverity}` : 'E-mail alerts: not configured'}
+              {config?.email.configured ? 'E-mail: daily summary + critical alerts' : 'E-mail alerts: not configured'}
             </span>
           </div>
         </div>
@@ -365,7 +365,7 @@ export const MonitoringPage: React.FC = () => {
         <Card
           title="E-mail alerts"
           icon={<Mail className={`w-4 h-4 ${config.email.configured ? 'text-emerald-400' : 'text-slate-400'}`} />}
-          sub={`Critical anomalies are e-mailed to the team (at most one e-mail per region and metric every ${config.email.cooldownMin} minutes).`}
+          sub="One summary e-mail a day (everything is good / notes). A red critical alert is sent only when 5 or more ping requests in a row time out in a region."
           right={
             <button type="button" onClick={runEmailTest} disabled={!config.email.configured || testingEmail}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${config.email.configured ? 'border-cyan-400/40 text-cyan-300 bg-cyan-500/15 hover:bg-cyan-500/25 cursor-pointer' : 'border-slate-700 text-slate-500 cursor-not-allowed'}`}>
@@ -393,7 +393,7 @@ export const MonitoringPage: React.FC = () => {
             </li>
             <li className="flex items-start gap-2">
               <Info className="w-4 h-4 mt-0.5 text-cyan-400 shrink-0" />
-              <span>Sends for: {config.email.minSeverity === 'critical' ? 'critical anomalies only' : 'warnings and critical anomalies'}.</span>
+              <span>Sends: one daily summary e-mail, plus a critical alert for 5 or more consecutive ping timeouts. Unusual values are listed in the daily summary only.</span>
             </li>
           </ul>
           {emailResult && <div className="mt-3"><Notice tone={emailResult.ok ? 'ok' : 'error'}>{emailResult.text}</Notice></div>}
