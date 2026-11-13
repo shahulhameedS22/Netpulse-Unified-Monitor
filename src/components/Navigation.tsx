@@ -77,15 +77,8 @@ export const Navigation: React.FC<NavigationProps> = ({
     },
   ];
 
-  // Dashboard, Monitoring and Regional Nodes are always shown.
-  // Speed Test / Ping Monitoring are shown while you are on them, while their test is running
-  // (even if you are on another tab), and until you have looked at a finished result.
-  const navItems = allNavItems.filter((item) => {
-    if (item.id === 'dashboard' || item.id === 'monitoring' || item.id === 'endpoints') return true;
-    if (item.id === 'speedtest') return currentTab === 'speedtest' || speedTestRunning || speedTestDone;
-    if (item.id === 'ping') return currentTab === 'ping' || pingTestRunning || pingTestDone;
-    return false;
-  });
+  // Every tab is always shown. The RUNNING / PROBING / DONE badges still tell you when a test is active or finished.
+  const navItems = allNavItems;
 
   const handleSelect = (tab: NavTab) => {
     onSelectTab(tab);
@@ -93,7 +86,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-[#0f172a]/95 backdrop-blur-xl border-b border-slate-700/80 shadow-md">
+    <header className="sticky top-0 z-40 bg-[#0f172a] border-b border-slate-700/80 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Brand Logo */}
@@ -119,7 +112,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           </div>
 
           {/* Desktop Nav Items */}
-          <nav className="hidden md:flex items-center gap-2">
+          <nav className="hidden md:flex items-center gap-1 lg:gap-2">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentTab === item.id;
@@ -129,7 +122,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   key={item.id}
                   onClick={() => handleSelect(item.id)}
                   type="button"
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  className={`inline-flex items-center gap-2 px-2.5 lg:px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
                     isActive
                       ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 shadow-sm shadow-cyan-500/10'
                       : 'text-slate-300 hover:text-white hover:bg-slate-800/80 border border-transparent'
@@ -149,7 +142,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
           {/* User Profile & Logout */}
           <div className="hidden md:flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#141e33] border border-slate-700/80 shadow-xs">
+            <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#141e33] border border-slate-700/80 shadow-xs">
               <div className="w-6 h-6 rounded-lg bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-xs font-bold">
                 <User className="w-3.5 h-3.5" />
               </div>
